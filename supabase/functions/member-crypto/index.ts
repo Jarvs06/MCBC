@@ -9,6 +9,7 @@ const corsHeaders = {
 };
 
 const ENCRYPTION_VERSION = "v1";
+const MAX_BATCH_SIZE = 500;
 
 const ENCRYPTED_FIELDS = [
   "first_name",
@@ -30,8 +31,7 @@ function jsonResponse(
       status,
       headers: {
         ...corsHeaders,
-        "Content-Type":
-          "application/json",
+        "Content-Type": "application/json",
       },
     }
   );
@@ -98,10 +98,7 @@ function base64ToUint8Array(
  */
 
 async function getEncryptionKey() {
-  const secret =
-    Deno.env.get(
-      "MEMBER_ENCRYPTION_KEY"
-    );
+  const secret = Deno.env.get("MEMBER_ENCRYPTION_KEY");
 
   if (!secret) {
     throw new Error(
@@ -109,15 +106,18 @@ async function getEncryptionKey() {
     );
   }
 
-  const encoder =
-    new TextEncoder();
-
-  const keyBytes =
-    encoder.encode(secret);
-
-  if (keyBytes.length !== 32) {
+  if (!/^[0-9a-fA-F]{64}$/.test(secret)) {
     throw new Error(
-      "MEMBER_ENCRYPTION_KEY must be exactly 32 bytes."
+      "MEMBER_ENCRYPTION_KEY must be exactly 64 hexadecimal characters."
+    );
+  }
+
+  const keyBytes = new Uint8Array(32);
+
+  for (let i = 0; i < 32; i++) {
+    keyBytes[i] = parseInt(
+      secret.slice(i * 2, i * 2 + 2),
+      16
     );
   }
 
@@ -306,8 +306,11 @@ async function decryptMember(
     }
 
     /*
-     * Old plaintext records
+     * Existing plaintext records
      * are returned unchanged.
+     *
+     * This is temporary migration
+     * compatibility.
      */
     if (
       !value.startsWith(
@@ -483,6 +486,11 @@ Deno.serve(
                   authorization,
               },
             },
+            auth: {
+              autoRefreshToken: false,
+              persistSession: false,
+              detectSessionInUrl: false,
+            },
           }
         );
 
@@ -516,7 +524,14 @@ Deno.serve(
       const supabaseAdmin =
         createClient(
           supabaseUrl,
-          serviceRoleKey
+          serviceRoleKey,
+          {
+            auth: {
+              autoRefreshToken: false,
+              persistSession: false,
+              detectSessionInUrl: false,
+            },
+          }
         );
 
       /*
@@ -558,7 +573,7 @@ Deno.serve(
 
       /*
        * ------------------------------------
-       * Active admin only
+       * Active + approved admin only
        * ------------------------------------
        */
 
@@ -620,6 +635,29 @@ Deno.serve(
         );
       }
 
+      /*
+       * ------------------------------------
+       * Decryption requires Super Admin
+       * ------------------------------------
+       *
+       * This prevents Viewer accounts from
+       * using this endpoint as a decryption
+       * oracle.
+       */
+
+      if (
+        action === "decrypt" &&
+        profile.role !== "Super Admin"
+      ) {
+        return jsonResponse(
+          {
+            error:
+              "Only Super Admin can decrypt member data.",
+          },
+          403
+        );
+      }
+
       const data =
         body.data;
 
@@ -655,6 +693,23 @@ Deno.serve(
       if (
         Array.isArray(data)
       ) {
+        /*
+         * Prevent excessive batch requests.
+         */
+
+        if (
+          data.length >
+          MAX_BATCH_SIZE
+        ) {
+          return jsonResponse(
+            {
+              error:
+                `A maximum of ${MAX_BATCH_SIZE} members can be processed at once.`,
+            },
+            400
+          );
+        }
+
         /*
          * Validate every item.
          */

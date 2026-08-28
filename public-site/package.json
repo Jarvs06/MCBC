@@ -1,0 +1,25 @@
+{
+  "name": "mcbc-public-site",
+  "main": "expo-router/entry",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@supabase/supabase-js": "^2.112.4",
+    "expo": "~57.0.16",
+    "expo-router": "~57.0.16",
+    "expo-status-bar": "~57.0.1",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.2",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-web": "~0.21.0"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.2",
+    "typescript": "~6.0.3"
+  },
+  "scripts": {
+    "web": "expo start --web",
+    "export:web": "expo export --platform web"
+  }
+}

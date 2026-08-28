@@ -1,9 +1,20 @@
-name: Deploy Expo Web to GitHub Pages
+name: Deploy Public Site to GitHub Pages
+
+# Deploys ONLY public-site/ — the homepage and the public Weekly
+# Pulse share pages. This is a deliberately separate, minimal
+# Expo project (its own package.json/app.json) so that the admin
+# panel and login screens (which live in the main app at the
+# repo root) can never end up in what's built and published here.
+# See public-site/src/constants/theme.ts for why its components
+# are plain copies instead of importing from the main app.
 
 on:
   push:
     branches:
       - main
+    paths:
+      - 'public-site/**'
+      - '.github/workflows/deploy-pages.yml'
 
   workflow_dispatch:
 
@@ -29,17 +40,21 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: public-site/package-lock.json
 
       - name: Install dependencies
+        working-directory: public-site
         run: npm ci
 
       - name: Export Expo web
+        working-directory: public-site
         env:
           EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
           EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
         run: npx expo export --platform web
 
       - name: Add GitHub Pages SPA fallback
+        working-directory: public-site
         run: cp dist/index.html dist/404.html
 
       - name: Setup Pages
@@ -48,7 +63,7 @@ jobs:
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./dist
+          path: ./public-site/dist
 
   deploy:
     environment:

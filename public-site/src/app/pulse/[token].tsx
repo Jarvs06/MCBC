@@ -1,9 +1,18 @@
 import { useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { InfoCard, Section } from '../../components/Section';
+import {
+  Card,
+  DateRow,
+  dateBadge,
+  formatDate,
+  formattedDateBadge,
+  formatTime,
+  formatTimeRange,
+  formatWeekday,
+} from '../../components/ChurchCard';
 import { colors, radii } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
 
@@ -12,11 +21,19 @@ import { supabase } from '../../lib/supabase';
  * PUBLIC WEEKLY PULSE
  * ==========================================
  *
- * Copy of the main app's src/app/pulse/[token].tsx, kept
- * byte-for-byte equivalent in behavior (see theme.ts for why
- * this project uses plain copies instead of cross-project
- * imports). If that file changes, mirror the change here.
+ * Top-level route (outside (app)/), reached only via a share
+ * link — no AppShell sidebar, same visual weight as the public
+ * homepage. Renders directly from get-weekly-digest's response
+ * rather than through a self-fetching component, since that
+ * response is already whatever an anonymous or admin caller is
+ * allowed to see — this screen just renders it, checking for the
+ * privileged-only fields before showing those sections.
+ *
+ * Cards/rows come from ../../components/ChurchCard — the same
+ * component the homepage uses.
  */
+
+const WIDE_BREAKPOINT = 860;
 
 type DigestContent = {
   announcements: {
@@ -43,13 +60,6 @@ type DigestContent = {
   anniversaries?: { id: string; names: string; date: string; dayLabel: string }[];
 };
 
-function formatDate(value: string): string {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (!match) return value;
-  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
-  return date.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
-}
-
 function formatWeekRange(start: string, end: string): string {
   const startMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(start);
   const endMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(end);
@@ -59,22 +69,11 @@ function formatWeekRange(start: string, end: string): string {
   return `${startDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' })} – ${endDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}`;
 }
 
-function formatTime(value: string): string {
-  const match = /^(\d{2}):(\d{2})/.exec(value);
-  if (!match) return value;
-  const date = new Date();
-  date.setHours(Number(match[1]), Number(match[2]), 0, 0);
-  return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-}
-
-function formatTimeRange(start: string | null, end: string | null): string | null {
-  if (!start && !end) return null;
-  return [start, end].filter((value): value is string => !!value).map(formatTime).join(' – ');
-}
-
 export default function PublicPulseScreen() {
   const { token } = useLocalSearchParams<{ token: string }>();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const isWide = width >= WIDE_BREAKPOINT;
 
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
@@ -125,7 +124,7 @@ export default function PublicPulseScreen() {
   if (loading) {
     return (
       <View style={styles.loadingScreen}>
-        <ActivityIndicator size="large" />
+        <ActivityIndicator size="large" color={colors.accent} />
       </View>
     );
   }
@@ -149,71 +148,71 @@ export default function PublicPulseScreen() {
         <Text style={styles.heroTitle}>{weekRange}</Text>
       </View>
 
-      <View style={styles.body}>
-        <Section icon="📢" title="Announcements" tintBg={colors.accentBg} tintColor={colors.accent}>
-          <InfoCard accentColor={colors.accent}>
+      <View style={[styles.body, isWide && styles.grid]}>
+        <View style={isWide && styles.gridItem}>
+          <Card icon="📢" title="Announcements">
             {content.announcements.length === 0 ? (
               <Text style={styles.emptyText}>No announcements this week.</Text>
             ) : (
               content.announcements.map((item, index) => (
-                <View key={item.id}>
-                  {!!item.start_date && (
-                    <Text style={styles.cardDate}>
-                      {formatDate(item.start_date)}
-                      {formatTimeRange(item.start_time, item.end_time)
-                        ? ` · ${formatTimeRange(item.start_time, item.end_time)}`
-                        : ''}
-                    </Text>
-                  )}
-                  <Text style={styles.cardTitle}>{item.title}</Text>
-                  <Text style={styles.cardText}>{item.body}</Text>
-                  {index < content.announcements.length - 1 && <View style={styles.divider} />}
-                </View>
+                <DateRow
+                  key={item.id}
+                  badge={item.start_date ? dateBadge(item.start_date) : 'tba'}
+                  title={item.title}
+                  subtitle={
+                    item.start_date
+                      ? `${formatWeekday(item.start_date)} · ${
+                          formatTimeRange(item.start_time, item.end_time) ?? 'TBA'
+                        }`
+                      : 'TBA'
+                  }
+                  last={index === content.announcements.length - 1}
+                />
               ))
             )}
-          </InfoCard>
-        </Section>
+          </Card>
+        </View>
 
         {hasPrivateSections && (
           <>
-            <Section icon="🎂" title="Birthdays" tintBg={colors.pinkBg} tintColor={colors.pinkText}>
-              <InfoCard accentColor={colors.pinkText}>
+            <View style={isWide && styles.gridItem}>
+              <Card icon="🎂" title="Birthdays" tintBg={colors.sageBg}>
                 {(content.birthdays ?? []).length === 0 ? (
                   <Text style={styles.emptyText}>No birthdays this week.</Text>
                 ) : (
                   (content.birthdays ?? []).map((person, index) => (
-                    <View key={person.id}>
-                      <View style={styles.personRow}>
-                        <Text style={styles.personName}>{person.name}</Text>
-                        <Text style={styles.cardText}>{person.date}</Text>
-                      </View>
-                      {index < (content.birthdays ?? []).length - 1 && <View style={styles.divider} />}
-                    </View>
+                    <DateRow
+                      key={person.id}
+                      badge={formattedDateBadge(person.date)}
+                      title={person.name}
+                      subtitle={person.dayLabel}
+                      last={index === (content.birthdays ?? []).length - 1}
+                    />
                   ))
                 )}
-              </InfoCard>
-            </Section>
+              </Card>
+            </View>
 
-            <Section icon="💍" title="Wedding Anniversaries" tintBg={colors.violetBg} tintColor={colors.violetText}>
-              <InfoCard accentColor={colors.violetText}>
+            <View style={isWide && styles.gridItem}>
+              <Card icon="💍" title="Wedding Anniversaries" tintBg={colors.clayBg}>
                 {(content.anniversaries ?? []).length === 0 ? (
                   <Text style={styles.emptyText}>No wedding anniversaries this week.</Text>
                 ) : (
                   (content.anniversaries ?? []).map((couple, index) => (
-                    <View key={couple.id}>
-                      <View style={styles.personRow}>
-                        <Text style={styles.personName}>{couple.names}</Text>
-                        <Text style={styles.cardText}>{couple.date}</Text>
-                      </View>
-                      {index < (content.anniversaries ?? []).length - 1 && <View style={styles.divider} />}
-                    </View>
+                    <DateRow
+                      key={couple.id}
+                      badge={formattedDateBadge(couple.date)}
+                      title={couple.names}
+                      subtitle={couple.dayLabel}
+                      last={index === (content.anniversaries ?? []).length - 1}
+                    />
                   ))
                 )}
-              </InfoCard>
-            </Section>
+              </Card>
+            </View>
 
-            <Section icon="🌸" title="Flowers" tintBg={colors.roseBg} tintColor={colors.roseText}>
-              <InfoCard accentColor={colors.roseText}>
+            <View style={isWide && styles.gridItem}>
+              <Card icon="🌸" title="Flowers" tintBg={colors.goldBg}>
                 {content.flowerSponsor ? (
                   <>
                     <Text style={styles.cardDate}>{formatDate(content.flowerSponsor.service_date)}</Text>
@@ -227,11 +226,11 @@ export default function PublicPulseScreen() {
                 ) : (
                   <Text style={styles.emptyText}>No flower sponsor set for this week.</Text>
                 )}
-              </InfoCard>
-            </Section>
+              </Card>
+            </View>
 
-            <Section icon="🎤" title="Midweek Service" tintBg={colors.adminStatusPendingBg} tintColor={colors.adminStatusPendingText}>
-              <InfoCard accentColor={colors.adminStatusPendingText}>
+            <View style={isWide && styles.gridItem}>
+              <Card icon="🎤" title="Midweek Service" tintBg={colors.brickBg}>
                 {content.midweekService ? (
                   <>
                     <Text style={styles.cardDate}>
@@ -246,33 +245,30 @@ export default function PublicPulseScreen() {
                 ) : (
                   <Text style={styles.emptyText}>No midweek service scheduled this week.</Text>
                 )}
-              </InfoCard>
-            </Section>
+              </Card>
+            </View>
           </>
         )}
 
-        <Section icon="📅" title="Events" tintBg={colors.successBg} tintColor={colors.success}>
-          <InfoCard accentColor={colors.success}>
+        <View style={isWide && styles.gridItem}>
+          <Card icon="📅" title="Events">
             {content.events.length === 0 ? (
               <Text style={styles.emptyText}>No events this week.</Text>
             ) : (
               content.events.map((event, index) => (
-                <View key={event.id}>
-                  <Text style={styles.cardDate}>
-                    {formatDate(event.event_date)}
-                    {formatTimeRange(event.start_time, event.end_time)
-                      ? ` · ${formatTimeRange(event.start_time, event.end_time)}`
-                      : ''}
-                  </Text>
-                  <Text style={styles.cardTitle}>{event.title}</Text>
-                  {!!event.description && <Text style={styles.cardText}>{event.description}</Text>}
-                  {!!event.location && <Text style={styles.cardText}>📍 {event.location}</Text>}
-                  {index < content.events.length - 1 && <View style={styles.divider} />}
-                </View>
+                <DateRow
+                  key={event.id}
+                  badge={dateBadge(event.event_date)}
+                  title={event.title}
+                  subtitle={`${formatWeekday(event.event_date)} · ${
+                    formatTimeRange(event.start_time, event.end_time) ?? 'TBA'
+                  }`}
+                  last={index === content.events.length - 1}
+                />
               ))
             )}
-          </InfoCard>
-        </Section>
+          </Card>
+        </View>
       </View>
     </ScrollView>
   );
@@ -305,7 +301,7 @@ const styles = StyleSheet.create({
   },
 
   hero: {
-    backgroundColor: colors.textPrimary,
+    backgroundColor: colors.accent,
     paddingHorizontal: 20,
     paddingBottom: 40,
     borderBottomLeftRadius: radii.lg + 10,
@@ -316,22 +312,19 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 1.2,
     textTransform: 'uppercase',
-    color: 'rgba(255, 255, 255, 0.55)',
+    color: 'rgba(255, 255, 255, 0.6)',
     marginBottom: 8,
   },
-  heroTitle: { fontSize: 28, fontWeight: '800', color: colors.surface },
+  heroTitle: { fontSize: 28, fontWeight: '800', color: '#ffffff' },
 
   body: { paddingHorizontal: 20, paddingTop: 34 },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 20 },
+  gridItem: { flexBasis: '45%', flexGrow: 1 },
 
   emptyText: { fontSize: 14, color: colors.textSecondary },
 
   cardDate: { fontSize: 13, fontWeight: '600', color: colors.textSecondary, marginBottom: 5 },
-  cardTitle: { fontSize: 17, fontWeight: '700', color: colors.textPrimary },
-  cardText: { fontSize: 14, lineHeight: 21, color: colors.textSecondary, marginTop: 5 },
+  cardTitle: { fontSize: 15, fontWeight: '700', color: colors.textPrimary },
+  cardText: { fontSize: 13, lineHeight: 20, color: colors.textSecondary, marginTop: 3 },
   cardLabel: { fontSize: 13, color: colors.textSecondary, marginBottom: 4 },
-
-  personRow: { paddingVertical: 3 },
-  personName: { fontSize: 16, fontWeight: '600', color: colors.textPrimary },
-
-  divider: { height: 1, backgroundColor: colors.border, marginVertical: 12 },
 });

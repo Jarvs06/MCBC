@@ -16,6 +16,7 @@ import { colors, radii } from '../constants/theme';
  */
 
 const MONTH_ABBR = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+const WEEKDAY_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
 export type DateBadge = { month: string; day: string } | 'tba' | null;
 
@@ -23,6 +24,32 @@ function parseDateOnly(value: string): Date | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
   if (!match) return null;
   return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+}
+
+/** Current week's Monday, as a local 'YYYY-MM-DD' string — used
+ * to split a combined this-week+next-week list (see
+ * refresh-public-celebrations, which stores both) into the two
+ * groups a "Next Week" divider separates. */
+export function currentWeekStart(): string {
+  const now = new Date();
+  const day = now.getDay();
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diffToMonday);
+  return `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, '0')}-${String(monday.getDate()).padStart(2, '0')}`;
+}
+
+/** Splits a list of items carrying a `week_start` and `day_label`
+ * into this week's and next week's, each sorted Monday→Sunday. */
+export function splitByWeek<T extends { week_start: string; day_label: string }>(
+  items: T[],
+  thisWeekStart: string
+): { thisWeek: T[]; nextWeek: T[] } {
+  const byDay = (a: T, b: T) => WEEKDAY_ORDER.indexOf(a.day_label) - WEEKDAY_ORDER.indexOf(b.day_label);
+
+  return {
+    thisWeek: items.filter((item) => item.week_start === thisWeekStart).sort(byDay),
+    nextWeek: items.filter((item) => item.week_start !== thisWeekStart).sort(byDay),
+  };
 }
 
 /** For a full 'YYYY-MM-DD' value. */
@@ -126,6 +153,17 @@ export function DateRow({ badge, title, subtitle, last }: DateRowProps) {
   );
 }
 
+/** Separates this week's entries from next week's within the
+ * same card — a heading plus a light top border, rather than a
+ * second card, so the two weeks read as one continuous list. */
+export function WeekDivider({ label }: { label: string }) {
+  return (
+    <View style={styles.weekDivider}>
+      <Text style={styles.weekDividerLabel}>{label}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   card: {
     flex: 1,
@@ -176,4 +214,19 @@ const styles = StyleSheet.create({
   dateBadgeTba: { fontSize: 10, fontWeight: '700', letterSpacing: 0.3, color: colors.textMuted },
 
   rowDivider: { borderBottomWidth: 1, borderBottomColor: colors.background },
+
+  weekDivider: {
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    marginTop: 10,
+    paddingTop: 10,
+  },
+  weekDividerLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    color: colors.textSecondary,
+    marginBottom: 4,
+  },
 });

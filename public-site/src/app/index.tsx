@@ -1,9 +1,22 @@
-import { useEffect, useState } from 'react';
+import { Link } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Card, DateRow, dateBadge, formatTime, formatTimeRange, formatWeekday, monthDayBadge } from '../components/ChurchCard';
+import {
+  Card,
+  currentWeekStart,
+  DateRow,
+  dateBadge,
+  formatDate,
+  formatTime,
+  formatTimeRange,
+  formatWeekday,
+  monthDayBadge,
+  splitByWeek,
+  WeekDivider,
+} from '../components/ChurchCard';
 import { colors, radii } from '../constants/theme';
 import { supabase } from '../lib/supabase';
 
@@ -12,24 +25,29 @@ import { supabase } from '../lib/supabase';
  * PUBLIC HOMEPAGE
  * ==========================================
  *
- * MCBC's real site design: hero, a Visit/Call/Email/Service-times
- * strip, the announcement/event/celebration cards, and a closing
- * banner — no header or footer (this is a single-page site with
- * nowhere else to navigate to).
+ * MCBC's real site design: hero (with the service schedule), a
+ * Visit/Call/Email link strip, the announcement/event/celebration/
+ * flowers/midweek-service cards, and a closing banner — no header
+ * or footer (this is a single-page site with nowhere else to
+ * navigate to).
  *
  * Announcements/events come straight from their tables (public
  * anon RLS policy, published rows only). Birthdays/anniversaries
  * come from `public_celebrations` instead of the `members` table
  * — a small, rotating, name + month/day-only cache kept in sync
  * by compile-weekly-digest, deliberately never exposing a birth
- * or wedding year. Flowers/midweek service still stay off this
- * page entirely — sponsor/speaker/presider names tied to a
- * specific date are more identifying than a first+last name and
- * a month/day, so that boundary stays as-is.
+ * or wedding year. Flowers/Midweek Service come from the
+ * `*_public` views rather than the base tables — both base tables
+ * carry a `notes` column that was never meant to be public (see
+ * the public-flowers-midweek migration).
  *
  * Cards/rows come from ../components/ChurchCard — the same
  * component the public Pulse page uses.
  */
+
+const MAPS_URL = 'https://maps.app.goo.gl/cRsnrSphFAg5B5ej7';
+const PHONE_URL = 'tel:09688539290';
+const EMAIL_URL = 'mailto:malagasangcbc2020@gmail.com';
 
 type Announcement = {
   id: string;
@@ -55,6 +73,16 @@ type Celebration = {
   display_name: string;
   month_day: string;
   day_label: string;
+  week_start: string;
+};
+
+type FlowerSponsor = { service_date: string; sponsored_by: string; message: string | null };
+
+type MidweekService = {
+  service_date: string;
+  service_time: string | null;
+  speaker: string | null;
+  presider: string | null;
 };
 
 const WIDE_BREAKPOINT = 860;
@@ -62,6 +90,28 @@ const WIDE_BREAKPOINT = 860;
 function todayDateString(): string {
   const today = new Date();
   return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+}
+
+/** This week's + next week's Monday-Sunday bounds, as local
+ * 'YYYY-MM-DD' strings — Flowers/Midweek Service show one record
+ * per week, so their query spans both weeks instead of just
+ * grabbing the next upcoming row regardless of how far out it is. */
+function getTwoWeekWindow(): { thisWeekStart: string; thisWeekEnd: string; nextWeekEnd: string } {
+  const now = new Date();
+  const day = now.getDay();
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diffToMonday);
+
+  const format = (date: Date) =>
+    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+  const thisWeekEnd = new Date(monday);
+  thisWeekEnd.setDate(monday.getDate() + 6);
+
+  const nextWeekEnd = new Date(monday);
+  nextWeekEnd.setDate(monday.getDate() + 13);
+
+  return { thisWeekStart: format(monday), thisWeekEnd: format(thisWeekEnd), nextWeekEnd: format(nextWeekEnd) };
 }
 
 export default function HomeScreen() {
@@ -74,14 +124,17 @@ export default function HomeScreen() {
   const [upcomingEvents, setUpcomingEvents] = useState<UpcomingEvent[]>([]);
   const [birthdays, setBirthdays] = useState<Celebration[]>([]);
   const [anniversaries, setAnniversaries] = useState<Celebration[]>([]);
+  const [flowerSponsors, setFlowerSponsors] = useState<FlowerSponsor[]>([]);
+  const [midweekServices, setMidweekServices] = useState<MidweekService[]>([]);
 
   useEffect(() => {
     let mounted = true;
 
     async function load() {
       const today = todayDateString();
+      const { thisWeekStart, nextWeekEnd } = getTwoWeekWindow();
 
-      const [announcementsResult, eventsResult, celebrationsResult] = await Promise.all([
+      const [announcementsResult, eventsResult, celebrationsResult, flowersResult, serviceResult] = await Promise.all([
         supabase
           .from('announcements')
           .select('id, title, body, start_date, start_time, end_time')
@@ -97,7 +150,21 @@ export default function HomeScreen() {
           .gte('event_date', today)
           .order('event_date', { ascending: true })
           .limit(5),
-        supabase.from('public_celebrations').select('id, kind, display_name, month_day, day_label'),
+        supabase.from('public_celebrations').select('id, kind, display_name, month_day, day_label, week_start'),
+        supabase
+          .from('flower_sponsors_public')
+          .select('service_date, sponsored_by, message')
+          .gte('service_date', thisWeekStart)
+          .lte('service_date', nextWeekEnd)
+          .order('service_date', { ascending: true })
+          .limit(2),
+        supabase
+          .from('midweek_services_public')
+          .select('service_date, service_time, speaker, presider')
+          .gte('service_date', thisWeekStart)
+          .lte('service_date', nextWeekEnd)
+          .order('service_date', { ascending: true })
+          .limit(2),
       ]);
 
       if (!mounted) return;
@@ -122,6 +189,18 @@ export default function HomeScreen() {
         setAnniversaries(celebrations.filter((entry) => entry.kind === 'anniversary'));
       }
 
+      if (flowersResult.error) {
+        console.error('[HOME] Load flowers error:', flowersResult.error);
+      } else {
+        setFlowerSponsors((flowersResult.data ?? []) as FlowerSponsor[]);
+      }
+
+      if (serviceResult.error) {
+        console.error('[HOME] Load midweek service error:', serviceResult.error);
+      } else {
+        setMidweekServices((serviceResult.data ?? []) as MidweekService[]);
+      }
+
       setLoading(false);
     }
 
@@ -131,6 +210,9 @@ export default function HomeScreen() {
       mounted = false;
     };
   }, []);
+
+  const thisWeekStart = currentWeekStart();
+  const { thisWeekEnd } = getTwoWeekWindow();
 
   return (
     <ScrollView style={styles.page} contentContainerStyle={styles.pageContent}>
@@ -149,30 +231,30 @@ export default function HomeScreen() {
           </Text>
         </View>
 
-        {isWide && <ChurchGlyph />}
+        {/* ================================ SERVICE TIMES ================================ */}
+
+        <View style={styles.serviceTimesCard}>
+          <Text style={styles.serviceTimesLabel}>🕐 Service Times</Text>
+
+          <ServiceTimeRow name="Sunday School" value="8:00 AM – 9:00 AM" />
+          <ServiceTimeRow name="Worship Service" value="9:00 AM – 11:00 AM" />
+          <ServiceTimeRow name="Midweek Service (Wednesday)" value="7:00 PM" />
+        </View>
       </View>
 
       {/* ================================ CONTACT STRIP ================================ */}
 
       <View style={styles.body}>
         <View style={[styles.contactCard, isWide && styles.contactCardRow]}>
-          <ContactItem icon="📍" label="Visit Us">
-            <Text style={styles.contactValue}>Villa Susana, Malagasang II-A,</Text>
-            <Text style={styles.contactValue}>Imus, Cavite, Philippines</Text>
-          </ContactItem>
-
-          <ContactItem icon="📞" label="Call Us">
-            <Text style={styles.contactValue}>0968 853 9290</Text>
-          </ContactItem>
-
-          <ContactItem icon="✉️" label="Email Us">
-            <Text style={styles.contactValue}>malagasangcbc2020@gmail.com</Text>
-          </ContactItem>
-
-          <ContactItem icon="🕐" label="Service Times">
-            <Text style={styles.contactValue}>Sunday 8:00 AM & 10:00 AM</Text>
-            <Text style={styles.contactValue}>Wednesday 7:00 PM</Text>
-          </ContactItem>
+          <ContactItem
+            icon="📍"
+            label="Visit Us"
+            value={['Villa Susana, Imus, Cavite']}
+            href={MAPS_URL}
+            external
+          />
+          <ContactItem icon="📞" label="Call Us" value="0968 853 9290" href={PHONE_URL} />
+          <ContactItem icon="✉️" label="Email Us" value="malagasangcbc2020@gmail.com" href={EMAIL_URL} />
         </View>
 
         {/* ================================ CARDS ================================ */}
@@ -226,37 +308,139 @@ export default function HomeScreen() {
             </View>
 
             <View style={isWide && styles.cardGridItem}>
-              <Card icon="🎂" title="Birthdays This Week">
-                {birthdays.length === 0 ? (
-                  <Text style={styles.emptyText}>No birthdays this week.</Text>
+              <Card icon="🎂" title="Birthdays" tintBg={colors.sageBg}>
+                {(() => {
+                  const { thisWeek, nextWeek } = splitByWeek(birthdays, thisWeekStart);
+                  return (
+                    <>
+                      {thisWeek.length === 0 ? (
+                        <Text style={styles.emptyText}>No birthday celebrant this week.</Text>
+                      ) : (
+                        thisWeek.map((person, index) => (
+                          <DateRow
+                            key={person.id}
+                            badge={monthDayBadge(person.month_day)}
+                            title={person.display_name}
+                            subtitle={person.day_label}
+                            last={index === thisWeek.length - 1}
+                          />
+                        ))
+                      )}
+
+                      <WeekDivider label="Next Week" />
+
+                      {nextWeek.length === 0 ? (
+                        <Text style={styles.emptyText}>No birthday celebrant next week.</Text>
+                      ) : (
+                        nextWeek.map((person, index) => (
+                          <DateRow
+                            key={person.id}
+                            badge={monthDayBadge(person.month_day)}
+                            title={person.display_name}
+                            subtitle={person.day_label}
+                            last={index === nextWeek.length - 1}
+                          />
+                        ))
+                      )}
+                    </>
+                  );
+                })()}
+              </Card>
+            </View>
+
+            <View style={isWide && styles.cardGridItem}>
+              <Card icon="💍" title="Wedding Anniversaries" tintBg={colors.clayBg}>
+                {(() => {
+                  const { thisWeek, nextWeek } = splitByWeek(anniversaries, thisWeekStart);
+                  return (
+                    <>
+                      {thisWeek.length === 0 ? (
+                        <Text style={styles.emptyText}>No wedding celebrant for this week.</Text>
+                      ) : (
+                        thisWeek.map((couple, index) => (
+                          <DateRow
+                            key={couple.id}
+                            badge={monthDayBadge(couple.month_day)}
+                            title={couple.display_name}
+                            subtitle={couple.day_label}
+                            last={index === thisWeek.length - 1}
+                          />
+                        ))
+                      )}
+
+                      <WeekDivider label="Next Week" />
+
+                      {nextWeek.length === 0 ? (
+                        <Text style={styles.emptyText}>No wedding celebrant for next week.</Text>
+                      ) : (
+                        nextWeek.map((couple, index) => (
+                          <DateRow
+                            key={couple.id}
+                            badge={monthDayBadge(couple.month_day)}
+                            title={couple.display_name}
+                            subtitle={couple.day_label}
+                            last={index === nextWeek.length - 1}
+                          />
+                        ))
+                      )}
+                    </>
+                  );
+                })()}
+              </Card>
+            </View>
+
+            <View style={isWide && styles.cardGridItem}>
+              <Card icon="🌸" title="Flowers" tintBg={colors.goldBg}>
+                {flowerSponsors.length === 0 ? (
+                  <Text style={styles.emptyText}>TBA</Text>
                 ) : (
-                  birthdays.map((person, index) => (
-                    <DateRow
-                      key={person.id}
-                      badge={monthDayBadge(person.month_day)}
-                      title={person.display_name}
-                      subtitle={person.day_label}
-                      last={index === birthdays.length - 1}
-                    />
-                  ))
+                  (() => {
+                    let dividerShown = false;
+                    return flowerSponsors.map((sponsor) => {
+                      const showDivider = !dividerShown && sponsor.service_date > thisWeekEnd;
+                      if (showDivider) dividerShown = true;
+
+                      return (
+                        <View key={sponsor.service_date} style={showDivider ? undefined : styles.stackedEntry}>
+                          {showDivider && <WeekDivider label="Next Week" />}
+                          <Text style={styles.cardDate}>{formatDate(sponsor.service_date)}</Text>
+                          <Text style={styles.cardLabel}>Sponsored by</Text>
+                          <Text style={styles.cardTitle}>{sponsor.sponsored_by}</Text>
+                          {!!sponsor.message && <Text style={styles.cardText}>{sponsor.message}</Text>}
+                        </View>
+                      );
+                    });
+                  })()
                 )}
               </Card>
             </View>
 
             <View style={isWide && styles.cardGridItem}>
-              <Card icon="💍" title="Wedding Anniversaries">
-                {anniversaries.length === 0 ? (
-                  <Text style={styles.emptyText}>No wedding anniversaries this week.</Text>
+              <Card icon="🎤" title="Midweek Service" tintBg={colors.brickBg}>
+                {midweekServices.length === 0 ? (
+                  <Text style={styles.emptyText}>TBA</Text>
                 ) : (
-                  anniversaries.map((couple, index) => (
-                    <DateRow
-                      key={couple.id}
-                      badge={monthDayBadge(couple.month_day)}
-                      title={couple.display_name}
-                      subtitle={couple.day_label}
-                      last={index === anniversaries.length - 1}
-                    />
-                  ))
+                  (() => {
+                    let dividerShown = false;
+                    return midweekServices.map((service) => {
+                      const showDivider = !dividerShown && service.service_date > thisWeekEnd;
+                      if (showDivider) dividerShown = true;
+
+                      return (
+                        <View key={service.service_date} style={showDivider ? undefined : styles.stackedEntry}>
+                          {showDivider && <WeekDivider label="Next Week" />}
+                          <Text style={styles.cardDate}>
+                            {formatDate(service.service_date)}
+                            {service.service_time ? ` · ${formatTime(service.service_time)}` : ''}
+                          </Text>
+                          <Text style={styles.cardLabel}>Speaker</Text>
+                          <Text style={styles.cardTitle}>{service.speaker || '—'}</Text>
+                          <Text style={[styles.cardLabel, { marginTop: 10 }]}>Presider</Text>
+                          <Text style={styles.cardTitle}>{service.presider || '—'}</Text>
+                        </View>
+                      );
+                    });
+                  })()
                 )}
               </Card>
             </View>
@@ -283,123 +467,59 @@ export default function HomeScreen() {
 
 /*
  * ==========================================
- * ContactItem
+ * ServiceTimeItem
  * ==========================================
  */
 
-function ContactItem({ icon, label, children }: { icon: string; label: string; children: React.ReactNode }) {
+function ServiceTimeRow({ name, value }: { name: string; value: string }) {
   return (
-    <View style={styles.contactItem}>
-      <View style={styles.contactIconBadge}>
-        <Text style={styles.contactIcon}>{icon}</Text>
-      </View>
-
-      <View>
-        <Text style={styles.contactLabel}>{label}</Text>
-        {children}
-      </View>
+    <View style={styles.serviceTimeRow}>
+      <Text style={styles.serviceTimeName}>{name}</Text>
+      <Text style={styles.serviceTimeValue}>{value}</Text>
     </View>
   );
 }
 
 /*
  * ==========================================
- * ChurchGlyph
+ * ContactItem
  * ==========================================
- *
- * A small flat line illustration built from plain Views (no
- * image asset, no new dependency) — a simple nod to the site
- * design's hero sketch, in the same muted tone.
  */
 
-function ChurchGlyph() {
+function ContactItem({
+  icon,
+  label,
+  value,
+  href,
+  external,
+}: {
+  icon: string;
+  label: string;
+  value: string | string[];
+  href: string;
+  external?: boolean;
+}) {
+  const lines = Array.isArray(value) ? value : [value];
+
   return (
-    <View style={glyphStyles.wrap}>
-      <View style={glyphStyles.crossV} />
-      <View style={glyphStyles.crossH} />
-      <View style={glyphStyles.roof} />
-      <View style={glyphStyles.body}>
-        <View style={glyphStyles.door} />
-        <View style={[glyphStyles.window, glyphStyles.windowLeft]} />
-        <View style={[glyphStyles.window, glyphStyles.windowRight]} />
-      </View>
-      <View style={glyphStyles.ground} />
-    </View>
+    <Link href={href as `${string}:${string}`} asChild {...(external ? { target: '_blank' } : {})}>
+      <Pressable style={styles.contactItem} accessibilityRole="link">
+        <View style={styles.contactIconBadge}>
+          <Text style={styles.contactIcon}>{icon}</Text>
+        </View>
+
+        <View>
+          <Text style={styles.contactLabel}>{label}</Text>
+          {lines.map((line, index) => (
+            <Text key={index} style={styles.contactValue}>
+              {line}
+            </Text>
+          ))}
+        </View>
+      </Pressable>
+    </Link>
   );
 }
-
-const GLYPH_TONE = '#c9c2ad';
-
-const glyphStyles = StyleSheet.create({
-  wrap: {
-    width: 220,
-    height: 220,
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-  },
-  crossV: {
-    position: 'absolute',
-    top: 6,
-    width: 3,
-    height: 22,
-    backgroundColor: GLYPH_TONE,
-  },
-  crossH: {
-    position: 'absolute',
-    top: 14,
-    width: 15,
-    height: 3,
-    backgroundColor: GLYPH_TONE,
-  },
-  roof: {
-    width: 0,
-    height: 0,
-    borderLeftWidth: 78,
-    borderRightWidth: 78,
-    borderBottomWidth: 60,
-    borderLeftColor: 'transparent',
-    borderRightColor: 'transparent',
-    borderBottomColor: GLYPH_TONE,
-    marginTop: 34,
-  },
-  body: {
-    width: 148,
-    height: 100,
-    borderWidth: 3,
-    borderColor: GLYPH_TONE,
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    flexDirection: 'row',
-    gap: 14,
-    paddingBottom: 14,
-  },
-  door: {
-    position: 'absolute',
-    bottom: 0,
-    width: 26,
-    height: 44,
-    borderWidth: 3,
-    borderBottomWidth: 0,
-    borderColor: GLYPH_TONE,
-    borderTopLeftRadius: 13,
-    borderTopRightRadius: 13,
-  },
-  window: {
-    width: 18,
-    height: 18,
-    borderWidth: 2,
-    borderColor: GLYPH_TONE,
-    borderRadius: 3,
-  },
-  windowLeft: { marginRight: 40 },
-  windowRight: { marginLeft: 40 },
-  ground: {
-    width: 190,
-    height: 3,
-    backgroundColor: GLYPH_TONE,
-    marginTop: 10,
-  },
-});
 
 // ==========================================
 // Styles
@@ -423,7 +543,7 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     width: '100%',
   },
-  heroText: { maxWidth: 560 },
+  heroText: { flex: 1, maxWidth: 560 },
 
   heroEyebrow: {
     fontSize: 12,
@@ -452,6 +572,34 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
   },
 
+  serviceTimesCard: {
+    width: '100%',
+    maxWidth: 360,
+    marginTop: 24,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.lg,
+    padding: 22,
+    gap: 12,
+  },
+  serviceTimesLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    color: colors.accent,
+    marginBottom: 6,
+  },
+  serviceTimeRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 12,
+  },
+  serviceTimeName: { fontSize: 14, fontWeight: '600', color: colors.textPrimary, flexShrink: 1 },
+  serviceTimeValue: { fontSize: 14, color: colors.textSecondary },
+
   body: { paddingHorizontal: 24, paddingBottom: 56, maxWidth: 1100, alignSelf: 'center', width: '100%' },
 
   contactCard: {
@@ -466,7 +614,7 @@ const styles = StyleSheet.create({
   contactCardRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'space-between',
+    justifyContent: 'space-around',
   },
 
   contactItem: { flexDirection: 'row', gap: 12, flexShrink: 1 },
@@ -489,6 +637,11 @@ const styles = StyleSheet.create({
   cardGridItem: { flexBasis: '45%', flexGrow: 1 },
 
   emptyText: { fontSize: 14, color: colors.textSecondary },
+  stackedEntry: { marginBottom: 4 },
+  cardDate: { fontSize: 13, fontWeight: '600', color: colors.textSecondary, marginBottom: 5 },
+  cardTitle: { fontSize: 15, fontWeight: '700', color: colors.textPrimary },
+  cardText: { fontSize: 13, lineHeight: 20, color: colors.textSecondary, marginTop: 3 },
+  cardLabel: { fontSize: 13, color: colors.textSecondary, marginBottom: 4 },
 
   banner: {
     backgroundColor: colors.bannerBg,

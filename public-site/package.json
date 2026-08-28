@@ -20,6 +20,7 @@
   },
   "scripts": {
     "web": "expo start --web",
-    "export:web": "expo export --platform web"
+    "export:web": "expo export --platform web",
+    "typecheck": "tsc --noEmit"
   }
 }

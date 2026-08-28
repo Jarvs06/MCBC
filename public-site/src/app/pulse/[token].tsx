@@ -24,10 +24,10 @@ import { supabase } from '../../lib/supabase';
  * Top-level route (outside (app)/), reached only via a share
  * link — no AppShell sidebar, same visual weight as the public
  * homepage. Renders directly from get-weekly-digest's response
- * rather than through a self-fetching component, since that
- * response is already whatever an anonymous or admin caller is
- * allowed to see — this screen just renders it, checking for the
- * privileged-only fields before showing those sections.
+ * rather than through a self-fetching component. get-weekly-
+ * digest returns the full digest content to every caller (none
+ * of it is more sensitive than what's already on the public
+ * homepage) — this screen just renders it.
  *
  * Cards/rows come from ../../components/ChurchCard — the same
  * component the homepage uses.
@@ -139,8 +139,6 @@ export default function PublicPulseScreen() {
     );
   }
 
-  const hasPrivateSections = content.birthdays !== undefined;
-
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <View style={[styles.hero, { paddingTop: insets.top + 20 }]}>
@@ -173,82 +171,78 @@ export default function PublicPulseScreen() {
           </Card>
         </View>
 
-        {hasPrivateSections && (
-          <>
-            <View style={isWide && styles.gridItem}>
-              <Card icon="🎂" title="Birthdays" tintBg={colors.sageBg}>
-                {(content.birthdays ?? []).length === 0 ? (
-                  <Text style={styles.emptyText}>No birthdays this week.</Text>
-                ) : (
-                  (content.birthdays ?? []).map((person, index) => (
-                    <DateRow
-                      key={person.id}
-                      badge={formattedDateBadge(person.date)}
-                      title={person.name}
-                      subtitle={person.dayLabel}
-                      last={index === (content.birthdays ?? []).length - 1}
-                    />
-                  ))
-                )}
-              </Card>
-            </View>
+        <View style={isWide && styles.gridItem}>
+          <Card icon="🎂" title="Birthdays — Next Week" tintBg={colors.sageBg}>
+            {(content.birthdays ?? []).length === 0 ? (
+              <Text style={styles.emptyText}>There are no celebrants next week.</Text>
+            ) : (
+              (content.birthdays ?? []).map((person, index) => (
+                <DateRow
+                  key={person.id}
+                  badge={formattedDateBadge(person.date)}
+                  title={person.name}
+                  subtitle={person.dayLabel}
+                  last={index === (content.birthdays ?? []).length - 1}
+                />
+              ))
+            )}
+          </Card>
+        </View>
 
-            <View style={isWide && styles.gridItem}>
-              <Card icon="💍" title="Wedding Anniversaries" tintBg={colors.clayBg}>
-                {(content.anniversaries ?? []).length === 0 ? (
-                  <Text style={styles.emptyText}>No wedding anniversaries this week.</Text>
-                ) : (
-                  (content.anniversaries ?? []).map((couple, index) => (
-                    <DateRow
-                      key={couple.id}
-                      badge={formattedDateBadge(couple.date)}
-                      title={couple.names}
-                      subtitle={couple.dayLabel}
-                      last={index === (content.anniversaries ?? []).length - 1}
-                    />
-                  ))
-                )}
-              </Card>
-            </View>
+        <View style={isWide && styles.gridItem}>
+          <Card icon="💍" title="Wedding Anniversaries — Next Week" tintBg={colors.clayBg}>
+            {(content.anniversaries ?? []).length === 0 ? (
+              <Text style={styles.emptyText}>There are no celebrants next week.</Text>
+            ) : (
+              (content.anniversaries ?? []).map((couple, index) => (
+                <DateRow
+                  key={couple.id}
+                  badge={formattedDateBadge(couple.date)}
+                  title={couple.names}
+                  subtitle={couple.dayLabel}
+                  last={index === (content.anniversaries ?? []).length - 1}
+                />
+              ))
+            )}
+          </Card>
+        </View>
 
-            <View style={isWide && styles.gridItem}>
-              <Card icon="🌸" title="Flowers" tintBg={colors.goldBg}>
-                {content.flowerSponsor ? (
-                  <>
-                    <Text style={styles.cardDate}>{formatDate(content.flowerSponsor.service_date)}</Text>
-                    <Text style={styles.cardLabel}>Sponsored by</Text>
-                    <Text style={styles.cardTitle}>{content.flowerSponsor.sponsored_by}</Text>
-                    {!!content.flowerSponsor.arrangement && (
-                      <Text style={styles.cardText}>Arrangement: {content.flowerSponsor.arrangement}</Text>
-                    )}
-                    {!!content.flowerSponsor.message && <Text style={styles.cardText}>{content.flowerSponsor.message}</Text>}
-                  </>
-                ) : (
-                  <Text style={styles.emptyText}>No flower sponsor set for this week.</Text>
+        <View style={isWide && styles.gridItem}>
+          <Card icon="🌸" title="Flowers — Next Week" tintBg={colors.goldBg}>
+            {content.flowerSponsor ? (
+              <>
+                <Text style={styles.cardDate}>{formatDate(content.flowerSponsor.service_date)}</Text>
+                <Text style={styles.cardLabel}>Sponsored by</Text>
+                <Text style={styles.cardTitle}>{content.flowerSponsor.sponsored_by}</Text>
+                {!!content.flowerSponsor.arrangement && (
+                  <Text style={styles.cardText}>Arrangement: {content.flowerSponsor.arrangement}</Text>
                 )}
-              </Card>
-            </View>
+                {!!content.flowerSponsor.message && <Text style={styles.cardText}>{content.flowerSponsor.message}</Text>}
+              </>
+            ) : (
+              <Text style={styles.emptyText}>TBA</Text>
+            )}
+          </Card>
+        </View>
 
-            <View style={isWide && styles.gridItem}>
-              <Card icon="🎤" title="Midweek Service" tintBg={colors.brickBg}>
-                {content.midweekService ? (
-                  <>
-                    <Text style={styles.cardDate}>
-                      {formatDate(content.midweekService.service_date)}
-                      {content.midweekService.service_time ? ` · ${formatTime(content.midweekService.service_time)}` : ''}
-                    </Text>
-                    <Text style={styles.cardLabel}>Speaker</Text>
-                    <Text style={styles.cardTitle}>{content.midweekService.speaker || '—'}</Text>
-                    <Text style={[styles.cardLabel, { marginTop: 10 }]}>Presider</Text>
-                    <Text style={styles.cardTitle}>{content.midweekService.presider || '—'}</Text>
-                  </>
-                ) : (
-                  <Text style={styles.emptyText}>No midweek service scheduled this week.</Text>
-                )}
-              </Card>
-            </View>
-          </>
-        )}
+        <View style={isWide && styles.gridItem}>
+          <Card icon="🎤" title="Midweek Service — Next Week" tintBg={colors.brickBg}>
+            {content.midweekService ? (
+              <>
+                <Text style={styles.cardDate}>
+                  {formatDate(content.midweekService.service_date)}
+                  {content.midweekService.service_time ? ` · ${formatTime(content.midweekService.service_time)}` : ''}
+                </Text>
+                <Text style={styles.cardLabel}>Speaker</Text>
+                <Text style={styles.cardTitle}>{content.midweekService.speaker || '—'}</Text>
+                <Text style={[styles.cardLabel, { marginTop: 10 }]}>Presider</Text>
+                <Text style={styles.cardTitle}>{content.midweekService.presider || '—'}</Text>
+              </>
+            ) : (
+              <Text style={styles.emptyText}>TBA</Text>
+            )}
+          </Card>
+        </View>
 
         <View style={isWide && styles.gridItem}>
           <Card icon="📅" title="Events">
@@ -317,7 +311,7 @@ const styles = StyleSheet.create({
   },
   heroTitle: { fontSize: 28, fontWeight: '800', color: '#ffffff' },
 
-  body: { paddingHorizontal: 20, paddingTop: 34 },
+  body: { paddingHorizontal: 20, paddingTop: 34, maxWidth: 1100, alignSelf: 'center', width: '100%' },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 20 },
   gridItem: { flexBasis: '45%', flexGrow: 1 },
 

@@ -1,137 +1,36 @@
-import {
-  router,
-  useLocalSearchParams,
-} from 'expo-router';
-
+import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
-
-import {
-  FunctionsHttpError,
-} from '@supabase/supabase-js';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import AppModal from '@/components/AppModal';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { colors, radii } from '@/constants/theme';
 import { useAuth } from '@/contexts/AuthContext';
+import { useAppModal } from '@/hooks/useAppModal';
+import { formatMemberName, normalizeOptionalText } from '@/lib/memberHelpers';
 import { supabase } from '@/lib/supabase';
-
-type Member = {
-  id: string;
-  member_no: string | null;
-
-  first_name: string;
-  middle_name: string | null;
-  last_name: string;
-  suffix: string | null;
-
-  birth_date: string | null;
-  gender: string | null;
-
-  spouse_id: string | null;
-  wedding_date: string | null;
-
-  address: string | null;
-  contact_no: string | null;
-
-  baptized: boolean;
-
-  status: string;
-  member_group: string;
-  ministry: string | null;
-
-  created_at: string;
-  updated_at: string;
-};
+import type { Member } from '@/types/member';
 
 /*
- * ==========================================
- * DISPLAY NORMALIZATION
- * ==========================================
- *
- * "NOT MENTIONED" is treated as blank on
- * this page so imported placeholder values
- * are never shown to the user.
+ * "NOT MENTIONED" is treated as blank on this page so imported
+ * placeholder values are never shown to the user.
  */
-function cleanDisplayValue(
-  value:
-    | string
-    | null
-    | undefined
-): string | null {
-  if (
-    value === null ||
-    value === undefined
-  ) {
-    return null;
-  }
-
-  const cleaned =
-    value
-      .replace(/\u00a0/g, ' ')
-      .trim();
-
-  if (
-    !cleaned ||
-    cleaned.toLowerCase() ===
-      'not mentioned'
-  ) {
-    return null;
-  }
-
-  return cleaned;
+function cleanDisplayValue(value: string | null | undefined): string | null {
+  return normalizeOptionalText(value) || null;
 }
 
 export default function MemberDetailsScreen() {
-  const { id } =
-    useLocalSearchParams<{
-      id: string;
-    }>();
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const { isSuperAdmin, isViewer, isActive } = useAuth();
 
-  const {
-    isSuperAdmin,
-    isViewer,
-    isActive,
-  } = useAuth();
+  const [member, setMember] = useState<Member | null>(null);
+  const [spouse, setSpouse] = useState<Member | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const [member, setMember] =
-    useState<Member | null>(null);
+  const modal = useAppModal();
 
-  const [spouse, setSpouse] =
-    useState<Member | null>(null);
-
-  const [loading, setLoading] =
-    useState(true);
-
-  const [modalVisible, setModalVisible] =
-    useState(false);
-
-  const [modalTitle, setModalTitle] =
-    useState('');
-
-  const [modalMessage, setModalMessage] =
-    useState('');
-
-  const [deleteModalVisible, setDeleteModalVisible] =
-    useState(false);
-
-  const [deleting, setDeleting] =
-    useState(false);
-
-  function showModal(
-    title: string,
-    message: string
-  ) {
-    setModalTitle(title);
-    setModalMessage(message);
-    setModalVisible(true);
-  }
+  const [deleteModalVisible, setDeleteModalVisible] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     if (!isActive) {
@@ -140,17 +39,13 @@ export default function MemberDetailsScreen() {
     }
 
     if (!id) {
-      showModal(
-        'Member Not Found',
-        'No member ID was provided.'
-      );
-
+      modal.show('Member Not Found', 'No member ID was provided.');
       setLoading(false);
-
       return;
     }
 
     loadMember();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, isActive]);
 
   /*
@@ -159,78 +54,21 @@ export default function MemberDetailsScreen() {
    * ----------------------------------------
    */
 
-  async function decryptMembers(
-    encryptedMembers: Record<
-      string,
-      unknown
-    >[]
-  ): Promise<Member[]> {
-    const {
-      data,
-      error,
-    } =
-      await supabase.functions.invoke(
-        'member-crypto',
-        {
-          body: {
-            action: 'decrypt',
-            data: encryptedMembers,
-          },
-        }
-      );
+  async function decryptMembers(encryptedMembers: Record<string, unknown>[]): Promise<Member[]> {
+    const { data, error } = await supabase.functions.invoke('member-crypto', {
+      body: {
+        action: 'decrypt',
+        data: encryptedMembers,
+      },
+    });
 
     if (error) {
-      console.error(
-        '[MEMBER DETAILS] Decryption failed:',
-        error
-      );
-
-      /*
-       * Get the actual Edge Function
-       * response when available.
-       */
-
-      if (
-        error instanceof
-        FunctionsHttpError
-      ) {
-        try {
-          const response =
-            await error.context;
-
-          const responseText =
-            await response.text();
-
-          console.error(
-            '[MEMBER DETAILS] Edge Function response:',
-            responseText
-          );
-
-          throw new Error(
-            responseText ||
-              'The member information could not be decrypted.'
-          );
-        } catch (readError) {
-          console.error(
-            '[MEMBER DETAILS] Could not read Edge Function error:',
-            readError
-          );
-
-          throw readError;
-        }
-      }
-
-      throw error;
+      console.error('[MEMBER DETAILS] Decryption failed:', error);
+      throw new Error('The member information could not be decrypted.');
     }
 
-    if (
-      !data ||
-      !data.data ||
-      !Array.isArray(data.data)
-    ) {
-      throw new Error(
-        'Invalid response from member-crypto.'
-      );
+    if (!data || !data.data || !Array.isArray(data.data)) {
+      throw new Error('Invalid response from member-crypto.');
     }
 
     return data.data as Member[];
@@ -248,28 +86,12 @@ export default function MemberDetailsScreen() {
       setMember(null);
       setSpouse(null);
 
-      /*
-       * --------------------------------------
-       * Load main member
-       * --------------------------------------
-       */
-
-      const {
-        data,
-        error,
-      } = await supabase
-        .from('members')
-        .select('*')
-        .eq('id', id)
-        .single();
+      const { data, error } = await supabase.from('members').select('*').eq('id', id).single();
 
       if (error) {
-        console.error(
-          '[MEMBER DETAILS] Failed to load member:',
-          error
-        );
+        console.error('[MEMBER DETAILS] Failed to load member:', error);
 
-        showModal(
+        modal.show(
           'Unable to Load Member',
           'The member could not be loaded. You may not have permission to view this record, or the record may no longer exist.'
         );
@@ -286,20 +108,11 @@ export default function MemberDetailsScreen() {
       let decryptedMembers: Member[];
 
       try {
-        decryptedMembers =
-          await decryptMembers([
-            data as Record<
-              string,
-              unknown
-            >,
-          ]);
+        decryptedMembers = await decryptMembers([data as Record<string, unknown>]);
       } catch (cryptoError) {
-        console.error(
-          '[MEMBER DETAILS] Member decryption error:',
-          cryptoError
-        );
+        console.error('[MEMBER DETAILS] Member decryption error:', cryptoError);
 
-        showModal(
+        modal.show(
           'Decryption Failed',
           'The member information could not be decrypted. Please try again or contact a Super Admin.'
         );
@@ -307,21 +120,14 @@ export default function MemberDetailsScreen() {
         return;
       }
 
-      const decryptedMember =
-        decryptedMembers[0];
+      const decryptedMember = decryptedMembers[0];
 
       if (!decryptedMember) {
-        showModal(
-          'Unable to Load Member',
-          'The member information could not be decrypted.'
-        );
-
+        modal.show('Unable to Load Member', 'The member information could not be decrypted.');
         return;
       }
 
-      setMember(
-        decryptedMember
-      );
+      setMember(decryptedMember);
 
       /*
        * --------------------------------------
@@ -330,47 +136,24 @@ export default function MemberDetailsScreen() {
        */
 
       if (data.spouse_id) {
-        const {
-          data: spouseData,
-          error: spouseError,
-        } = await supabase
+        const { data: spouseData, error: spouseError } = await supabase
           .from('members')
           .select('*')
-          .eq(
-            'id',
-            data.spouse_id
-          )
+          .eq('id', data.spouse_id)
           .single();
 
-        if (
-          !spouseError &&
-          spouseData
-        ) {
+        if (!spouseError && spouseData) {
           try {
-            const decryptedSpouse =
-              await decryptMembers([
-                spouseData as Record<
-                  string,
-                  unknown
-                >,
-              ]);
+            const decryptedSpouse = await decryptMembers([spouseData as Record<string, unknown>]);
 
-            if (
-              decryptedSpouse[0]
-            ) {
-              setSpouse(
-                decryptedSpouse[0]
-              );
+            if (decryptedSpouse[0]) {
+              setSpouse(decryptedSpouse[0]);
             }
           } catch (cryptoError) {
-            console.error(
-              '[MEMBER DETAILS] Spouse decryption failed:',
-              cryptoError
-            );
+            console.error('[MEMBER DETAILS] Spouse decryption failed:', cryptoError);
 
             /*
-             * Don't prevent the main
-             * member from displaying if
+             * Don't prevent the main member from displaying if
              * spouse decryption fails.
              */
             setSpouse(null);
@@ -380,15 +163,8 @@ export default function MemberDetailsScreen() {
         setSpouse(null);
       }
     } catch (error) {
-      console.error(
-        '[MEMBER DETAILS] Unexpected member loading error:',
-        error
-      );
-
-      showModal(
-        'Error',
-        'Something went wrong while loading the member. Please try again.'
-      );
+      console.error('[MEMBER DETAILS] Unexpected member loading error:', error);
+      modal.show('Error', 'Something went wrong while loading the member. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -403,23 +179,13 @@ export default function MemberDetailsScreen() {
   async function handleDeleteMember() {
     if (!isActive || !isSuperAdmin) {
       setDeleteModalVisible(false);
-
-      showModal(
-        'Access Denied',
-        'Only an active Super Admin can delete members.'
-      );
-
+      modal.show('Access Denied', 'Only an active Super Admin can delete members.');
       return;
     }
 
     if (!member?.id) {
       setDeleteModalVisible(false);
-
-      showModal(
-        'Unable to Delete Member',
-        'The member could not be identified.'
-      );
-
+      modal.show('Unable to Delete Member', 'The member could not be identified.');
       return;
     }
 
@@ -430,50 +196,24 @@ export default function MemberDetailsScreen() {
     try {
       setDeleting(true);
 
-      const {
-        data,
-        error,
-      } =
-        await supabase.functions.invoke(
-          'delete-member',
-          {
-            body: {
-              member_id: member.id,
-            },
-          }
-        );
+      const { data, error } = await supabase.functions.invoke('delete-member', {
+        body: { member_id: member.id },
+      });
 
       if (error) {
-        console.error(
-          '[MEMBER DETAILS] Delete member error:',
-          error
-        );
+        console.error('[MEMBER DETAILS] Delete member error:', error);
 
         setDeleteModalVisible(false);
-
-        showModal(
-          'Unable to Delete Member',
-          'The member could not be deleted. Please try again.'
-        );
+        modal.show('Unable to Delete Member', 'The member could not be deleted. Please try again.');
 
         return;
       }
 
-      if (
-        !data ||
-        data.success !== true
-      ) {
-        console.error(
-          '[MEMBER DETAILS] Invalid delete-member response:',
-          data
-        );
+      if (!data || data.success !== true) {
+        console.error('[MEMBER DETAILS] Invalid delete-member response:', data);
 
         setDeleteModalVisible(false);
-
-        showModal(
-          'Unable to Delete Member',
-          'The member could not be deleted. Please try again.'
-        );
+        modal.show('Unable to Delete Member', 'The member could not be deleted. Please try again.');
 
         return;
       }
@@ -481,23 +221,15 @@ export default function MemberDetailsScreen() {
       setDeleteModalVisible(false);
 
       /*
-       * The member no longer exists, so return
-       * to the member list after successful
-       * deletion.
+       * The member no longer exists, so return to the member list
+       * after successful deletion.
        */
       router.replace('/members');
     } catch (error) {
-      console.error(
-        '[MEMBER DETAILS] Unexpected delete error:',
-        error
-      );
+      console.error('[MEMBER DETAILS] Unexpected delete error:', error);
 
       setDeleteModalVisible(false);
-
-      showModal(
-        'Unable to Delete Member',
-        'Something went wrong while deleting the member. Please try again.'
-      );
+      modal.show('Unable to Delete Member', 'Something went wrong while deleting the member. Please try again.');
     } finally {
       setDeleting(false);
     }
@@ -509,64 +241,24 @@ export default function MemberDetailsScreen() {
    * ----------------------------------------
    */
 
-  function formatDate(
-    date: string | null
-  ) {
-    const cleanedDate =
-      cleanDisplayValue(date);
+  function formatDate(date: string | null) {
+    const cleanedDate = cleanDisplayValue(date);
 
     if (!cleanedDate) {
       return '—';
     }
 
-    const parsed =
-      new Date(
-        `${cleanedDate}T00:00:00`
-      );
+    const parsed = new Date(`${cleanedDate}T00:00:00`);
 
-    if (
-      Number.isNaN(
-        parsed.getTime()
-      )
-    ) {
+    if (Number.isNaN(parsed.getTime())) {
       return cleanedDate;
     }
 
-    return parsed.toLocaleDateString(
-      'en-US',
-      {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-      }
-    );
-  }
-
-  /*
-   * ----------------------------------------
-   * Full name
-   * ----------------------------------------
-   */
-
-  function getFullName(
-    person: Member
-  ) {
-    return [
-      cleanDisplayValue(
-        person.first_name
-      ),
-      cleanDisplayValue(
-        person.middle_name
-      ),
-      cleanDisplayValue(
-        person.last_name
-      ),
-      cleanDisplayValue(
-        person.suffix
-      ),
-    ]
-      .filter(Boolean)
-      .join(' ');
+    return parsed.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
   }
 
   /*
@@ -574,461 +266,201 @@ export default function MemberDetailsScreen() {
    * Access control
    * ----------------------------------------
    *
-   * The app layout already protects the
-   * authenticated application, but this
-   * screen also checks the account status
-   * before allowing member data to be
-   * displayed or decrypted.
+   * The app layout already protects the authenticated
+   * application, but this screen also checks the account status
+   * before allowing member data to be displayed or decrypted.
    */
 
   if (!isActive) {
     return (
       <View style={styles.center}>
-        <Text style={styles.emptyTitle}>
-          Access Denied
-        </Text>
+        <Text style={styles.emptyTitle}>Access Denied</Text>
 
         <Text style={styles.emptyText}>
-          Your administrator account is not
-          active. You cannot view member records.
+          Your administrator account is not active. You cannot view member records.
         </Text>
 
         <Pressable
           style={styles.backButton}
-          onPress={() => {
-            router.replace('/');
-          }}
+          onPress={() => router.replace('/')}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
         >
-          <Text
-            style={
-              styles.backButtonText
-            }
-          >
-            Go Back
-          </Text>
+          <Text style={styles.backButtonText}>Go Back</Text>
         </Pressable>
       </View>
     );
   }
-
-  /*
-   * ----------------------------------------
-   * Loading
-   * ----------------------------------------
-   */
 
   if (loading) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator
-          size="large"
-        />
-
-        <Text style={styles.loadingText}>
-          Loading member...
-        </Text>
+        <ActivityIndicator size="large" />
+        <Text style={styles.loadingText}>Loading member...</Text>
       </View>
     );
   }
 
-  /*
-   * ----------------------------------------
-   * Member not found
-   * ----------------------------------------
-   */
-
   if (!member) {
     return (
       <View style={styles.center}>
-        <Text style={styles.emptyTitle}>
-          Member Not Found
-        </Text>
-
-        <Text style={styles.emptyText}>
-          The member could not be found.
-        </Text>
+        <Text style={styles.emptyTitle}>Member Not Found</Text>
+        <Text style={styles.emptyText}>The member could not be found.</Text>
 
         <Pressable
           style={styles.backButton}
-          onPress={() => {
-            router.push({
-              pathname:
-                '/(app)/members',
-            });
-          }}
+          onPress={() => router.push({ pathname: '/(app)/members' })}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
         >
-          <Text
-            style={
-              styles.backButtonText
-            }
-          >
-            Go Back
-          </Text>
+          <Text style={styles.backButtonText}>Go Back</Text>
         </Pressable>
       </View>
     );
   }
 
-  const fullName =
-    getFullName(member);
+  const fullName = formatMemberName(member);
 
   return (
     <View style={styles.screen}>
-      <ScrollView
-        style={styles.container}
-        contentContainerStyle={
-          styles.content
-        }
-      >
-
-        {/* ======================================
-            HEADER
-        ====================================== */}
+      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+        {/* Header */}
 
         <View style={styles.header}>
           <View style={styles.headerText}>
-            <Text style={styles.title}>
-              {fullName}
-            </Text>
+            <Text style={styles.title}>{fullName}</Text>
 
-            {member.member_no && (
-              <Text
-                style={
-                  styles.memberNumber
-                }
-              >
-                Member No.{' '}
-                {member.member_no}
-              </Text>
-            )}
+            {member.member_no && <Text style={styles.memberNumber}>Member No. {member.member_no}</Text>}
           </View>
 
           <Pressable
             style={styles.backButton}
             onPress={() => router.replace('/members')}
+            accessibilityRole="button"
+            accessibilityLabel="Back to members"
           >
-            <Text
-              style={
-                styles.backButtonText
-              }
-            >
-              Back
-            </Text>
+            <Text style={styles.backButtonText}>Back</Text>
           </Pressable>
         </View>
 
-        {/* ======================================
-            STATUS
-        ====================================== */}
+        {/* Status */}
 
         <View style={styles.statusRow}>
-          <View
-            style={
-              styles.statusBadge
-            }
-          >
-            <Text
-              style={
-                styles.statusText
-              }
-            >
-              {member.status}
-            </Text>
+          <View style={styles.statusBadge}>
+            <Text style={styles.statusText}>{member.status}</Text>
           </View>
 
           {member.baptized && (
-            <View
-              style={
-                styles.baptizedBadge
-              }
-            >
-              <Text
-                style={
-                  styles.baptizedText
-                }
-              >
-                Baptized
-              </Text>
+            <View style={styles.baptizedBadge}>
+              <Text style={styles.baptizedText}>Baptized</Text>
             </View>
           )}
         </View>
 
-        {/* ======================================
-            PERSONAL INFORMATION
-        ====================================== */}
+        {/* Personal Information */}
 
         <View style={styles.card}>
-          <Text
-            style={styles.cardTitle}
-          >
-            Personal Information
-          </Text>
+          <Text style={styles.cardTitle}>Personal Information</Text>
 
-          <InfoRow
-            label="First Name"
-            value={
-              member.first_name
-            }
-          />
-
-          <InfoRow
-            label="Middle Name"
-            value={
-              member.middle_name
-            }
-          />
-
-          <InfoRow
-            label="Last Name"
-            value={
-              member.last_name
-            }
-          />
-
-          <InfoRow
-            label="Suffix"
-            value={
-              member.suffix
-            }
-          />
-
-          <InfoRow
-            label="Birth Date"
-            value={formatDate(
-              member.birth_date
-            )}
-          />
-
-          <InfoRow
-            label="Gender"
-            value={
-              member.gender
-            }
-          />
+          <InfoRow label="First Name" value={member.first_name} />
+          <InfoRow label="Middle Name" value={member.middle_name} />
+          <InfoRow label="Last Name" value={member.last_name} />
+          <InfoRow label="Suffix" value={member.suffix} />
+          <InfoRow label="Birth Date" value={formatDate(member.birth_date)} />
+          <InfoRow label="Gender" value={member.gender} />
         </View>
 
-        {/* ======================================
-            CHURCH INFORMATION
-        ====================================== */}
+        {/* Church Information */}
 
         <View style={styles.card}>
-          <Text
-            style={styles.cardTitle}
-          >
-            Church Information
-          </Text>
+          <Text style={styles.cardTitle}>Church Information</Text>
 
-          <InfoRow
-            label="Member Group"
-            value={
-              member.member_group
-            }
-          />
-
-          <InfoRow
-            label="Ministry"
-            value={
-              member.ministry
-            }
-          />
-
-          <InfoRow
-            label="Baptized"
-            value={
-              member.baptized
-                ? 'Yes'
-                : 'No'
-            }
-          />
-
-          <InfoRow
-            label="Status"
-            value={
-              member.status
-            }
-          />
+          <InfoRow label="Member Group" value={member.member_group} />
+          <InfoRow label="Ministry" value={member.ministry} />
+          <InfoRow label="Baptized" value={member.baptized ? 'Yes' : 'No'} />
+          <InfoRow label="Status" value={member.status} />
         </View>
 
-        {/* ======================================
-            FAMILY INFORMATION
-        ====================================== */}
+        {/* Family Information */}
 
         <View style={styles.card}>
-          <Text
-            style={styles.cardTitle}
-          >
-            Family Information
-          </Text>
+          <Text style={styles.cardTitle}>Family Information</Text>
 
-          <InfoRow
-            label="Spouse"
-            value={
-              spouse
-                ? getFullName(spouse)
-                : 'None'
-            }
-          />
-
-          <InfoRow
-            label="Wedding Anniversary"
-            value={formatDate(
-              member.wedding_date
-            )}
-          />
+          <InfoRow label="Spouse" value={spouse ? formatMemberName(spouse) : 'None'} />
+          <InfoRow label="Wedding Anniversary" value={formatDate(member.wedding_date)} />
         </View>
 
-        {/* ======================================
-            CONTACT INFORMATION
-        ====================================== */}
+        {/* Contact Information */}
 
         <View style={styles.card}>
-          <Text
-            style={styles.cardTitle}
-          >
-            Contact Information
-          </Text>
+          <Text style={styles.cardTitle}>Contact Information</Text>
 
-          <InfoRow
-            label="Contact No."
-            value={
-              member.contact_no
-            }
-          />
-
-          <InfoRow
-            label="Address"
-            value={
-              member.address
-            }
-          />
+          <InfoRow label="Contact No." value={member.contact_no} />
+          <InfoRow label="Address" value={member.address} />
         </View>
 
-        {/* ======================================
-            ACTIONS
-        ====================================== */}
+        {/* Actions */}
 
-        {isActive &&
-          isSuperAdmin && (
+        {isActive && isSuperAdmin && (
           <View style={styles.actions}>
             <Pressable
-              style={
-                styles.editButton
-              }
+              style={styles.editButton}
               onPress={() => {
                 router.push({
-                  pathname:
-                    '/(app)/members/edit',
-                  params: {
-                    id: member.id,
-                  },
+                  pathname: '/(app)/members/edit',
+                  params: { id: member.id },
                 });
               }}
               disabled={deleting}
+              accessibilityRole="button"
+              accessibilityLabel="Edit member"
             >
-              <Text
-                style={
-                  styles.editButtonText
-                }
-              >
-                Edit Member
-              </Text>
+              <Text style={styles.editButtonText}>Edit Member</Text>
             </Pressable>
 
             <Pressable
-              style={
-                styles.deleteButton
-              }
-              onPress={() => {
-                setDeleteModalVisible(
-                  true
-                );
-              }}
+              style={styles.deleteButton}
+              onPress={() => setDeleteModalVisible(true)}
               disabled={deleting}
+              accessibilityRole="button"
+              accessibilityLabel="Delete member"
             >
-              <Text
-                style={
-                  styles.deleteButtonText
-                }
-              >
-                Delete Member
-              </Text>
+              <Text style={styles.deleteButtonText}>Delete Member</Text>
             </Pressable>
           </View>
         )}
 
         {isViewer && (
-          <View
-            style={
-              styles.viewerNotice
-            }
-          >
-            <Text
-              style={
-                styles.viewerNoticeTitle
-              }
-            >
-              Viewer Access
-            </Text>
+          <View style={styles.viewerNotice}>
+            <Text style={styles.viewerNoticeTitle}>Viewer Access</Text>
 
-            <Text
-              style={
-                styles.viewerNoticeText
-              }
-            >
-              You can view this
-              member's information,
-              but you cannot edit or
-              delete member records.
+            <Text style={styles.viewerNoticeText}>
+              You can view this member's information, but you cannot edit or delete member records.
             </Text>
           </View>
         )}
-
       </ScrollView>
 
-      {/* ======================================
-          DELETE CONFIRMATION
-      ====================================== */}
+      {/* Delete confirmation */}
 
-      <AppModal
+      <ConfirmDialog
         visible={deleteModalVisible}
         title="Delete Member"
-        message={
-          deleting
-            ? 'Deleting this member...'
-            : `Are you sure you want to permanently delete ${fullName}? This action cannot be undone.`
-        }
-        buttonText={
-          deleting
-            ? 'Deleting...'
-            : 'Delete'
-        }
-        onClose={() => {
+        message={`Are you sure you want to permanently delete ${fullName}? This action cannot be undone.`}
+        actionText={deleting ? 'Deleting...' : 'Delete'}
+        actionVariant="danger"
+        loading={deleting}
+        onCancel={() => {
           if (!deleting) {
-            setDeleteModalVisible(
-              false
-            );
+            setDeleteModalVisible(false);
           }
         }}
-        onConfirm={
-          deleting
-            ? undefined
-            : handleDeleteMember
-        }
+        onConfirm={handleDeleteMember}
       />
 
-      {/* ======================================
-          MODAL
-      ====================================== */}
+      {/* Info modal */}
 
-      <AppModal
-        visible={modalVisible}
-        title={modalTitle}
-        message={modalMessage}
-        buttonText="OK"
-        onClose={() =>
-          setModalVisible(false)
-        }
-      />
+      <AppModal visible={modal.visible} title={modal.title} message={modal.message} buttonText="OK" onClose={modal.hide} />
     </View>
   );
 }
@@ -1039,30 +471,11 @@ export default function MemberDetailsScreen() {
  * ==========================================
  */
 
-function InfoRow({
-  label,
-  value,
-}: {
-  label: string;
-  value:
-    | string
-    | null
-    | undefined;
-}) {
+function InfoRow({ label, value }: { label: string; value: string | null | undefined }) {
   return (
     <View style={styles.infoRow}>
-      <Text
-        style={styles.infoLabel}
-      >
-        {label}
-      </Text>
-
-      <Text
-        style={styles.infoValue}
-      >
-        {cleanDisplayValue(value) ??
-          '—'}
-      </Text>
+      <Text style={styles.infoLabel}>{label}</Text>
+      <Text style={styles.infoValue}>{cleanDisplayValue(value) ?? '—'}</Text>
     </View>
   );
 }
@@ -1073,214 +486,200 @@ function InfoRow({
  * ==========================================
  */
 
-const styles =
-  StyleSheet.create({
-    screen: {
-      flex: 1,
-      backgroundColor:
-        '#f8fafc',
-    },
+const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
 
-    container: {
-      flex: 1,
-    },
+  container: {
+    flex: 1,
+  },
 
-    content: {
-      padding: 24,
-      paddingBottom: 60,
-    },
+  content: {
+    padding: 24,
+    paddingBottom: 60,
+  },
 
-    header: {
-      flexDirection:
-        'row',
-      justifyContent:
-        'space-between',
-      alignItems: 'center',
-      marginBottom: 18,
-      gap: 20,
-    },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 18,
+    gap: 20,
+  },
 
-    headerText: {
-      flex: 1,
-    },
+  headerText: {
+    flex: 1,
+  },
 
-    title: {
-      fontSize: 28,
-      fontWeight: '700',
-      color: '#111827',
-    },
+  title: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
 
-    memberNumber: {
-      fontSize: 14,
-      color: '#6b7280',
-      marginTop: 5,
-    },
+  memberNumber: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    marginTop: 5,
+  },
 
-    backButton: {
-      backgroundColor:
-        '#111827',
-      paddingHorizontal: 16,
-      paddingVertical: 10,
-      borderRadius: 8,
-    },
+  backButton: {
+    backgroundColor: colors.textPrimary,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
 
-    backButtonText: {
-      color: '#ffffff',
-      fontSize: 14,
-      fontWeight: '600',
-    },
+  backButtonText: {
+    color: colors.surface,
+    fontSize: 14,
+    fontWeight: '600',
+  },
 
-    statusRow: {
-      flexDirection:
-        'row',
-      gap: 8,
-      marginBottom: 20,
-    },
+  statusRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 20,
+  },
 
-    statusBadge: {
-      backgroundColor:
-        '#f1f5f9',
-      paddingHorizontal: 12,
-      paddingVertical: 7,
-      borderRadius: 20,
-    },
+  statusBadge: {
+    backgroundColor: colors.statusInactiveBg,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: radii.pill,
+  },
 
-    statusText: {
-      fontSize: 13,
-      fontWeight: '600',
-      color: '#334155',
-    },
+  statusText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.statusInactiveText,
+  },
 
-    baptizedBadge: {
-      backgroundColor:
-        '#ecfdf5',
-      paddingHorizontal: 12,
-      paddingVertical: 7,
-      borderRadius: 20,
-    },
+  baptizedBadge: {
+    backgroundColor: colors.successBg,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: radii.pill,
+  },
 
-    baptizedText: {
-      fontSize: 13,
-      fontWeight: '600',
-      color: '#047857',
-    },
+  baptizedText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.success,
+  },
 
-    card: {
-      backgroundColor:
-        '#ffffff',
-      borderWidth: 1,
-      borderColor:
-        '#e5e7eb',
-      borderRadius: 14,
-      padding: 20,
-      marginBottom: 16,
-    },
+  card: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.lg,
+    padding: 20,
+    marginBottom: 16,
+  },
 
-    cardTitle: {
-      fontSize: 18,
-      fontWeight: '700',
-      color: '#111827',
-      marginBottom: 8,
-    },
+  cardTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    marginBottom: 8,
+  },
 
-    infoRow: {
-      paddingVertical: 12,
-      borderBottomWidth: 1,
-      borderBottomColor:
-        '#f1f5f9',
-    },
+  infoRow: {
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.statusInactiveBg,
+  },
 
-    infoLabel: {
-      fontSize: 13,
-      fontWeight: '600',
-      color: '#6b7280',
-    },
+  infoLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
 
-    infoValue: {
-      fontSize: 15,
-      color: '#111827',
-      marginTop: 4,
-    },
+  infoValue: {
+    fontSize: 15,
+    color: colors.textPrimary,
+    marginTop: 4,
+  },
 
-    actions: {
-      marginTop: 4,
-      marginBottom: 16,
-    },
+  actions: {
+    marginTop: 4,
+    marginBottom: 16,
+  },
 
-    editButton: {
-      backgroundColor:
-        '#111827',
-      borderRadius: 9,
-      paddingVertical: 14,
-      alignItems: 'center',
-    },
+  editButton: {
+    backgroundColor: colors.textPrimary,
+    borderRadius: radii.sm,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
 
-    editButtonText: {
-      color: '#ffffff',
-      fontSize: 15,
-      fontWeight: '600',
-    },
+  editButtonText: {
+    color: colors.surface,
+    fontSize: 15,
+    fontWeight: '600',
+  },
 
-    deleteButton: {
-      backgroundColor: '#b91c1c',
-      borderRadius: 9,
-      paddingVertical: 14,
-      alignItems: 'center',
-      marginTop: 10,
-    },
+  deleteButton: {
+    backgroundColor: colors.danger,
+    borderRadius: radii.sm,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 10,
+  },
 
-    deleteButtonText: {
-      color: '#ffffff',
-      fontSize: 15,
-      fontWeight: '600',
-    },
+  deleteButtonText: {
+    color: colors.surface,
+    fontSize: 15,
+    fontWeight: '600',
+  },
 
-    viewerNotice: {
-      backgroundColor:
-        '#ffffff',
-      borderWidth: 1,
-      borderColor:
-        '#e5e7eb',
-      borderRadius: 14,
-      padding: 18,
-    },
+  viewerNotice: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.lg,
+    padding: 18,
+  },
 
-    viewerNoticeTitle: {
-      fontSize: 16,
-      fontWeight: '700',
-      color: '#111827',
-    },
+  viewerNoticeTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
 
-    viewerNoticeText: {
-      fontSize: 14,
-      lineHeight: 21,
-      color: '#6b7280',
-      marginTop: 6,
-    },
+  viewerNoticeText: {
+    fontSize: 14,
+    lineHeight: 21,
+    color: colors.textSecondary,
+    marginTop: 6,
+  },
 
-    center: {
-      flex: 1,
-      alignItems: 'center',
-      justifyContent: 'center',
-      padding: 30,
-    },
+  center: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 30,
+  },
 
-    loadingText: {
-      fontSize: 15,
-      color: '#6b7280',
-      marginTop: 12,
-    },
+  loadingText: {
+    fontSize: 15,
+    color: colors.textSecondary,
+    marginTop: 12,
+  },
 
-    emptyTitle: {
-      fontSize: 22,
-      fontWeight: '700',
-      color: '#111827',
-    },
+  emptyTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
 
-    emptyText: {
-      fontSize: 14,
-      color: '#6b7280',
-      marginTop: 6,
-      marginBottom: 20,
-    },
-  });
+  emptyText: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    marginTop: 6,
+    marginBottom: 20,
+  },
+});

@@ -1,3 +1,4 @@
+import * as Clipboard from 'expo-clipboard';
 import { Link, router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
@@ -7,125 +8,112 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 
 import AppModal from '@/components/AppModal';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { FilterDropdown } from '@/components/FilterDropdown';
+import { Pagination } from '@/components/Pagination';
+import { colors, radii, WIDE_BREAKPOINT } from '@/constants/theme';
 import { useAuth } from '@/contexts/AuthContext';
+import { useAppModal } from '@/hooks/useAppModal';
+import { resolveEdgeFunctionError } from '@/lib/edgeFunctionError';
 import { supabase } from '@/lib/supabase';
+import { isValidPassword, MIN_PASSWORD_LENGTH } from '@/lib/validators';
+import type { AdminProfile, AdminRole, AdminStatus } from '@/types/admin';
 
-type AdminRole = 'Super Admin' | 'Viewer';
+const PAGE_SIZE = 10;
 
-type AdminStatus =
-  | 'Pending'
-  | 'Active'
-  | 'Disabled';
+function formatExpiresAt(value: string): string {
+  if (!value) {
+    return '—';
+  }
 
-type AdminProfile = {
-  id: string;
-  full_name: string;
-  role: AdminRole;
-  status: AdminStatus;
-  approved: boolean;
-  created_at: string;
-  updated_at: string;
-};
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return '—';
+  }
+
+  return date.toLocaleString(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+}
+
+const statusFilterOptions = ['All', 'Active', 'Pending', 'Disabled'] as const;
+const roleFilterOptions = ['All', 'Super Admin', 'Viewer'] as const;
 
 export default function AdminUsersScreen() {
-  const {
-    profile,
-    isSuperAdmin,
-  } = useAuth();
+  const { profile, isSuperAdmin } = useAuth();
+  const { width } = useWindowDimensions();
+  const isWide = width >= WIDE_BREAKPOINT;
 
-  const [users, setUsers] =
-    useState<AdminProfile[]>([]);
-
-  const [loading, setLoading] =
-    useState(true);
+  const [users, setUsers] = useState<AdminProfile[]>([]);
+  const [loading, setLoading] = useState(true);
 
   // ----------------------------------------
   // Search & Filters
   // ----------------------------------------
 
-  const [search, setSearch] =
-    useState('');
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'All' | AdminStatus>('All');
+  const [roleFilter, setRoleFilter] = useState<'All' | AdminRole>('All');
+  const [openFilter, setOpenFilter] = useState<'status' | 'role' | null>(null);
 
-  const [statusFilter, setStatusFilter] =
-    useState<'All' | AdminStatus>('All');
+  const [page, setPage] = useState(1);
 
-  const [roleFilter, setRoleFilter] =
-    useState<'All' | AdminRole>('All');
+  const modal = useAppModal();
 
-  const [modalVisible, setModalVisible] =
-    useState(false);
-
-  const [modalTitle, setModalTitle] =
-    useState('');
-
-  const [modalMessage, setModalMessage] =
-    useState('');
-
-  const [statusConfirmVisible, setStatusConfirmVisible] =
-    useState(false);
-
-  const [statusConfirmUser, setStatusConfirmUser] =
-    useState<AdminProfile | null>(null);
-
-  const [statusConfirmNextStatus, setStatusConfirmNextStatus] =
-    useState<'Active' | 'Disabled' | null>(null);
-
-  const [statusUpdating, setStatusUpdating] =
-    useState(false);
+  const [statusConfirmVisible, setStatusConfirmVisible] = useState(false);
+  const [statusConfirmUser, setStatusConfirmUser] = useState<AdminProfile | null>(null);
+  const [statusConfirmNextStatus, setStatusConfirmNextStatus] = useState<
+    'Active' | 'Disabled' | null
+  >(null);
+  const [statusUpdating, setStatusUpdating] = useState(false);
 
   // ----------------------------------------
-  // Activation Link
+  // Activation Code
   // ----------------------------------------
 
-  const [activationModalVisible, setActivationModalVisible] =
-    useState(false);
-
-  const [activationUser, setActivationUser] =
-    useState<AdminProfile | null>(null);
-
-  const [activationLink, setActivationLink] =
-    useState('');
-
-  const [activationLoading, setActivationLoading] =
-    useState(false);
-
-  const [activationCopied, setActivationCopied] =
-    useState(false);
+  const [activationModalVisible, setActivationModalVisible] = useState(false);
+  const [activationUser, setActivationUser] = useState<AdminProfile | null>(null);
+  const [activationEmail, setActivationEmail] = useState('');
+  const [activationCode, setActivationCode] = useState('');
+  const [activationExpiresAt, setActivationExpiresAt] = useState('');
+  const [activationLoading, setActivationLoading] = useState(false);
+  const [activationCopied, setActivationCopied] = useState(false);
 
   // ----------------------------------------
   // Delete Administrator
   // ----------------------------------------
 
-  const [deleteModalVisible, setDeleteModalVisible] =
-    useState(false);
+  const [deleteModalVisible, setDeleteModalVisible] = useState(false);
+  const [deleteUser, setDeleteUser] = useState<AdminProfile | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
-  const [deleteUser, setDeleteUser] =
-    useState<AdminProfile | null>(null);
+  // ----------------------------------------
+  // Set Password
+  // ----------------------------------------
+  //
+  // Last-resort fallback for when the invitation-link flow doesn't
+  // reach someone: a Super Admin can set a non-Super-Admin account's
+  // password directly, whether that account is still Pending (never
+  // activated) or already Active.
 
-  const [deleteLoading, setDeleteLoading] =
-    useState(false);
-
-  function showModal(
-    title: string,
-    message: string
-  ) {
-    setModalTitle(title);
-    setModalMessage(message);
-    setModalVisible(true);
-  }
+  const [passwordModalVisible, setPasswordModalVisible] = useState(false);
+  const [passwordUser, setPasswordUser] = useState<AdminProfile | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [passwordSaving, setPasswordSaving] = useState(false);
 
   async function loadUsers() {
     setLoading(true);
 
     try {
-      const {
-        data,
-        error,
-      } = await supabase
+      const { data, error } = await supabase
         .from('admin_profiles')
         .select(
           `
@@ -138,37 +126,21 @@ export default function AdminUsersScreen() {
             updated_at
           `
         )
-        .order('created_at', {
-          ascending: false,
-        });
+        .order('created_at', { ascending: false });
 
       if (error) {
-        console.error(
-          'Failed to load admin users:',
-          error
-        );
-
-        showModal(
+        console.error('Failed to load admin users:', error);
+        modal.show(
           'Unable to Load Users',
           'We could not load the administrator accounts. Please try again.'
         );
-
         return;
       }
 
-      setUsers(
-        (data ?? []) as AdminProfile[]
-      );
+      setUsers((data ?? []) as AdminProfile[]);
     } catch (error) {
-      console.error(
-        'Unexpected error loading users:',
-        error
-      );
-
-      showModal(
-        'Error',
-        'Something went wrong while loading administrator accounts.'
-      );
+      console.error('Unexpected error loading users:', error);
+      modal.show('Error', 'Something went wrong while loading administrator accounts.');
     } finally {
       setLoading(false);
     }
@@ -181,6 +153,7 @@ export default function AdminUsersScreen() {
     }
 
     loadUsers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSuperAdmin]);
 
   // ----------------------------------------
@@ -188,85 +161,32 @@ export default function AdminUsersScreen() {
   // ----------------------------------------
 
   async function confirmStatusChange() {
-    if (
-      !statusConfirmUser ||
-      !statusConfirmNextStatus ||
-      statusUpdating
-    ) {
+    if (!statusConfirmUser || !statusConfirmNextStatus || statusUpdating) {
       return;
     }
 
-    const targetUser =
-      statusConfirmUser;
-
-    const nextStatus =
-      statusConfirmNextStatus;
+    const targetUser = statusConfirmUser;
+    const nextStatus = statusConfirmNextStatus;
 
     try {
       setStatusUpdating(true);
 
-      const {
-        data,
-        error,
-      } =
-        await supabase.functions.invoke(
-          'set-admin-status',
-          {
-            body: {
-              admin_id:
-                targetUser.id,
-              status:
-                nextStatus,
-            },
-          }
-        );
+      const { data, error } = await supabase.functions.invoke('set-admin-status', {
+        body: { admin_id: targetUser.id, status: nextStatus },
+      });
 
       if (error) {
-        console.error(
-          '[ADMIN STATUS] Update error:',
-          error
-        );
+        console.error('[ADMIN STATUS] Update error:', error);
 
-        let message =
-          error.message ||
-          'Unable to update administrator status.';
-
-        try {
-          if (
-            'context' in error &&
-            error.context
-          ) {
-            const body =
-              await error.context.json();
-
-            message =
-              body?.error ??
-              body?.message ??
-              message;
-          }
-        } catch {
-          // Keep the original error message.
-        }
-
+        const { title, message } = await resolveEdgeFunctionError(error, 'Update Failed');
         setStatusConfirmVisible(false);
-
-        showModal(
-          'Update Failed',
-          message
-        );
-
+        modal.show(title, message);
         return;
       }
 
       if (!data?.success) {
         setStatusConfirmVisible(false);
-
-        showModal(
-          'Update Failed',
-          data?.error ??
-            'Unable to update administrator status.'
-        );
-
+        modal.show('Update Failed', data?.error ?? 'Unable to update administrator status.');
         return;
       }
 
@@ -276,52 +196,40 @@ export default function AdminUsersScreen() {
 
       await loadUsers();
 
-      showModal(
-        nextStatus === 'Disabled'
-          ? 'Administrator Disabled'
-          : 'Administrator Enabled',
+      modal.show(
+        nextStatus === 'Disabled' ? 'Administrator Disabled' : 'Administrator Enabled',
         `${targetUser.full_name}'s administrator account is now ${nextStatus.toLowerCase()}.`
       );
     } catch (error) {
-      console.error(
-        '[ADMIN STATUS] Unexpected error:',
-        error
-      );
-
+      console.error('[ADMIN STATUS] Unexpected error:', error);
       setStatusConfirmVisible(false);
-
-      showModal(
-        'Update Failed',
-        'Something went wrong while updating the administrator status.'
-      );
+      modal.show('Update Failed', 'Something went wrong while updating the administrator status.');
     } finally {
       setStatusUpdating(false);
     }
   }
 
   // ----------------------------------------
-  // Generate activation link
+  // Generate activation code
   // ----------------------------------------
 
-  async function generateActivationLink(
-    user: AdminProfile
-  ) {
+  async function generateActivationCode(user: AdminProfile) {
     if (activationLoading) {
       return;
     }
 
     if (user.id === profile?.id) {
-      showModal(
+      modal.show(
         'Action Not Allowed',
-        'You cannot generate an activation link for your own administrator account.'
+        'You cannot generate an activation code for your own administrator account.'
       );
       return;
     }
 
     if (user.status !== 'Pending') {
-      showModal(
-        'Activation Link Unavailable',
-        'An activation link can only be generated for a Pending administrator account.'
+      modal.show(
+        'Activation Code Unavailable',
+        'An activation code can only be generated for a Pending administrator account.'
       );
       return;
     }
@@ -330,119 +238,53 @@ export default function AdminUsersScreen() {
       setActivationLoading(true);
       setActivationCopied(false);
 
-      const {
-        data,
-        error,
-      } =
-        await supabase.functions.invoke(
-          'resend-admin-invite',
-          {
-            body: {
-              admin_id:
-                user.id,
-            },
-          }
-        );
+      const { data, error } = await supabase.functions.invoke('regenerate-admin-activation-code', {
+        body: { admin_id: user.id },
+      });
 
       if (error) {
-        console.error(
-          '[ADMIN INVITE] Generate link error:',
-          error
+        console.error('[ADMIN ACTIVATION] Generate code error:', error);
+
+        const { title, message } = await resolveEdgeFunctionError(
+          error,
+          'Activation Code Failed'
         );
-
-        let message =
-          error.message ||
-          'Unable to generate the activation link.';
-
-        try {
-          if (
-            'context' in error &&
-            error.context
-          ) {
-            const body =
-              await error.context.json();
-
-            message =
-              body?.error ??
-              body?.message ??
-              message;
-          }
-        } catch {
-          // Keep the original message.
-        }
-
-        showModal(
-          'Activation Link Failed',
-          message
-        );
-
+        modal.show(title, message);
         return;
       }
 
       if (!data?.success) {
-        showModal(
-          'Activation Link Failed',
-          data?.error ??
-            'Unable to generate the activation link.'
-        );
-
+        modal.show('Activation Code Failed', data?.error ?? 'Unable to generate the activation code.');
         return;
       }
 
       setActivationUser(user);
-
-      setActivationLink(
-        data.activation_link ?? ''
-      );
-
+      setActivationEmail(data.admin?.email ?? '');
+      setActivationCode(data.activation_code ?? '');
+      setActivationExpiresAt(data.expires_at ?? '');
       setActivationModalVisible(true);
     } catch (error) {
-      console.error(
-        '[ADMIN INVITE] Unexpected error:',
-        error
-      );
-
-      showModal(
-        'Activation Link Failed',
-        'Something went wrong while generating the activation link.'
+      console.error('[ADMIN ACTIVATION] Unexpected error:', error);
+      modal.show(
+        'Activation Code Failed',
+        'Something went wrong while generating the activation code.'
       );
     } finally {
       setActivationLoading(false);
     }
   }
 
-  async function copyActivationLink() {
-    if (!activationLink) {
+  async function copyActivationCode() {
+    if (!activationCode) {
       return;
     }
 
     try {
-      if (
-        typeof navigator !== 'undefined' &&
-        navigator.clipboard
-      ) {
-        await navigator.clipboard.writeText(
-          activationLink
-        );
-
-        setActivationCopied(true);
-        return;
-      }
-
-      showModal(
-        'Copy Failed',
-        'Your browser does not allow clipboard access here. Please copy the link manually.'
-      );
+      await Clipboard.setStringAsync(activationCode);
+      setActivationCopied(true);
     } catch (error) {
-      console.error(
-        '[ADMIN INVITE] Clipboard error:',
-        error
-      );
-
-      showModal(
-        'Copy Failed',
-        'We could not copy the activation link. Please copy it manually.'
-      );
+      console.error('[ADMIN ACTIVATION] Clipboard error:', error);
+      modal.show('Copy Failed', 'We could not copy the activation code. Please copy it manually.');
     }
   }
 
@@ -460,79 +302,31 @@ export default function AdminUsersScreen() {
     if (targetUser.id === profile?.id) {
       setDeleteModalVisible(false);
       setDeleteUser(null);
-
-      showModal(
-        'Action Not Allowed',
-        'You cannot delete your own administrator account.'
-      );
-
+      modal.show('Action Not Allowed', 'You cannot delete your own administrator account.');
       return;
     }
 
     try {
       setDeleteLoading(true);
 
-      const {
-        data,
-        error,
-      } =
-        await supabase.functions.invoke(
-          'delete-admin-user',
-          {
-            body: {
-              admin_id: targetUser.id,
-            },
-          }
-        );
+      const { data, error } = await supabase.functions.invoke('delete-admin-user', {
+        body: { admin_id: targetUser.id },
+      });
 
       if (error) {
-        console.error(
-          '[ADMIN DELETE] Delete error:',
-          error
-        );
+        console.error('[ADMIN DELETE] Delete error:', error);
 
-        let message =
-          error.message ||
-          'Unable to delete the administrator account.';
-
-        try {
-          if (
-            'context' in error &&
-            error.context
-          ) {
-            const body =
-              await error.context.json();
-
-            message =
-              body?.error ??
-              body?.message ??
-              message;
-          }
-        } catch {
-          // Keep original message.
-        }
-
+        const { title, message } = await resolveEdgeFunctionError(error, 'Delete Failed');
         setDeleteModalVisible(false);
         setDeleteUser(null);
-
-        showModal(
-          'Delete Failed',
-          message
-        );
-
+        modal.show(title, message);
         return;
       }
 
       if (!data?.success) {
         setDeleteModalVisible(false);
         setDeleteUser(null);
-
-        showModal(
-          'Delete Failed',
-          data?.error ??
-            'Unable to delete the administrator account.'
-        );
-
+        modal.show('Delete Failed', data?.error ?? 'Unable to delete the administrator account.');
         return;
       }
 
@@ -541,25 +335,87 @@ export default function AdminUsersScreen() {
 
       await loadUsers();
 
-      showModal(
+      modal.show(
         'Administrator Deleted',
         `${targetUser.full_name}'s administrator account has been permanently deleted.`
       );
     } catch (error) {
-      console.error(
-        '[ADMIN DELETE] Unexpected error:',
-        error
-      );
-
+      console.error('[ADMIN DELETE] Unexpected error:', error);
       setDeleteModalVisible(false);
       setDeleteUser(null);
-
-      showModal(
-        'Delete Failed',
-        'Something went wrong while deleting the administrator account.'
-      );
+      modal.show('Delete Failed', 'Something went wrong while deleting the administrator account.');
     } finally {
       setDeleteLoading(false);
+    }
+  }
+
+  // ----------------------------------------
+  // Set password
+  // ----------------------------------------
+
+  function openSetPasswordModal(user: AdminProfile) {
+    setPasswordUser(user);
+    setNewPassword('');
+    setConfirmNewPassword('');
+    setPasswordModalVisible(true);
+  }
+
+  async function confirmSetPassword() {
+    if (!passwordUser || passwordSaving) {
+      return;
+    }
+
+    if (!isValidPassword(newPassword)) {
+      modal.show(
+        'Password Too Short',
+        `The password must be at least ${MIN_PASSWORD_LENGTH} characters.`
+      );
+      return;
+    }
+
+    if (newPassword !== confirmNewPassword) {
+      modal.show('Passwords Do Not Match', 'Please make sure both passwords are the same.');
+      return;
+    }
+
+    const targetUser = passwordUser;
+
+    try {
+      setPasswordSaving(true);
+
+      const { data, error } = await supabase.functions.invoke('set-admin-password', {
+        body: { admin_id: targetUser.id, password: newPassword },
+      });
+
+      if (error) {
+        console.error('[ADMIN PASSWORD] Set password error:', error);
+
+        const { title, message } = await resolveEdgeFunctionError(error, 'Set Password Failed');
+        modal.show(title, message);
+        return;
+      }
+
+      if (!data?.success) {
+        modal.show('Set Password Failed', data?.error ?? "Unable to set the administrator's password.");
+        return;
+      }
+
+      setPasswordModalVisible(false);
+      setPasswordUser(null);
+      setNewPassword('');
+      setConfirmNewPassword('');
+
+      await loadUsers();
+
+      modal.show(
+        'Password Set',
+        `${targetUser.full_name}'s password has been set. Share it with them directly — they can sign in right away.`
+      );
+    } catch (error) {
+      console.error('[ADMIN PASSWORD] Unexpected error:', error);
+      modal.show('Set Password Failed', 'Something went wrong while setting the password.');
+    } finally {
+      setPasswordSaving(false);
     }
   }
 
@@ -567,57 +423,48 @@ export default function AdminUsersScreen() {
   // Filtered users
   // ----------------------------------------
 
-  const normalizedSearch =
-    search.trim().toLowerCase();
+  const normalizedSearch = search.trim().toLowerCase();
 
-  const filteredUsers =
-    users.filter((user) => {
-      const matchesSearch =
-        !normalizedSearch ||
-        user.full_name
-          .toLowerCase()
-          .includes(normalizedSearch) ||
-        user.role
-          .toLowerCase()
-          .includes(normalizedSearch) ||
-        user.status
-          .toLowerCase()
-          .includes(normalizedSearch);
+  const filteredUsers = users.filter((user) => {
+    const matchesSearch =
+      !normalizedSearch ||
+      user.full_name.toLowerCase().includes(normalizedSearch) ||
+      user.role.toLowerCase().includes(normalizedSearch) ||
+      user.status.toLowerCase().includes(normalizedSearch);
 
-      const matchesStatus =
-        statusFilter === 'All' ||
-        user.status === statusFilter;
+    const matchesStatus = statusFilter === 'All' || user.status === statusFilter;
+    const matchesRole = roleFilter === 'All' || user.role === roleFilter;
 
-      const matchesRole =
-        roleFilter === 'All' ||
-        user.role === roleFilter;
+    return matchesSearch && matchesStatus && matchesRole;
+  });
 
-      return (
-        matchesSearch &&
-        matchesStatus &&
-        matchesRole
-      );
-    });
+  // ----------------------------------------
+  // Pagination
+  // ----------------------------------------
+  //
+  // currentPage is clamped against the live filtered count rather
+  // than reset via an effect, so narrowing a filter down to fewer
+  // pages than the current page never shows a blank page.
+
+  const totalPages = Math.max(1, Math.ceil(filteredUsers.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const paginatedUsers = filteredUsers.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
   if (!isSuperAdmin) {
     return (
       <View style={styles.center}>
-        <Text style={styles.deniedTitle}>
-          Access Denied
-        </Text>
-
+        <Text style={styles.deniedTitle}>Access Denied</Text>
         <Text style={styles.deniedText}>
-          Only Super Admin can manage administrator
-          accounts.
+          Only Super Admin can manage administrator accounts.
         </Text>
 
         <Pressable
           style={styles.backButton}
           onPress={() => router.back()}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
         >
-          <Text style={styles.backButtonText}>
-            Go Back
-          </Text>
+          <Text style={styles.backButtonText}>Go Back</Text>
         </Pressable>
       </View>
     );
@@ -625,58 +472,45 @@ export default function AdminUsersScreen() {
 
   return (
     <View style={styles.screen}>
-      <ScrollView
-        style={styles.container}
-        contentContainerStyle={styles.content}
-      >
-        {/* Header */}
-        <View style={styles.header}>
-          <View style={styles.headerText}>
-            <Text style={styles.title}>
-              Admin Users
-            </Text>
+      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+        {/* ================================ HEADER ================================ */}
 
+        <View style={[styles.header, isWide && styles.headerWide]}>
+          <View style={styles.headerText}>
+            <Text style={styles.title}>Admin Users</Text>
             <Text style={styles.subtitle}>
-              Manage users who can access the church
-              administration system.
+              Manage users who can access the church administration system.
             </Text>
           </View>
 
-          <Link
-            href="/(app)/admin-users/add"
-            asChild
-          >
-            <Pressable style={styles.addButton}>
-              <Text style={styles.addButtonText}>
-                + Add User
-              </Text>
+          <Link href="/(app)/admin-users/add" asChild>
+            <Pressable
+              style={styles.addButton}
+              accessibilityRole="button"
+              accessibilityLabel="Add user"
+            >
+              <Text style={styles.addButtonText}>+ Add User</Text>
             </Pressable>
           </Link>
         </View>
 
-        {/* Current user */}
+        {/* ================================ CURRENT USER ================================ */}
+
         {profile && (
           <View style={styles.currentUserCard}>
-            <Text style={styles.currentUserLabel}>
-              You are signed in as
-            </Text>
-
-            <Text style={styles.currentUserName}>
-              {profile.full_name}
-            </Text>
-
-            <Text style={styles.currentUserRole}>
-              {profile.role}
-            </Text>
+            <Text style={styles.currentUserLabel}>You are signed in as</Text>
+            <Text style={styles.currentUserName}>{profile.full_name}</Text>
+            <Text style={styles.currentUserRole}>{profile.role}</Text>
           </View>
         )}
 
-        {/* Search */}
+        {/* ================================ SEARCH ================================ */}
+
         <View style={styles.searchContainer}>
           <TextInput
             style={styles.searchInput}
             placeholder="Search administrators..."
-            placeholderTextColor="#9ca3af"
+            placeholderTextColor={colors.textMuted}
             value={search}
             onChangeText={setSearch}
             autoCapitalize="none"
@@ -684,544 +518,443 @@ export default function AdminUsersScreen() {
           />
         </View>
 
-        {/* Filters */}
-        <View style={styles.filterSection}>
-          <Text style={styles.filterLabel}>
-            Status
-          </Text>
+        {/* ================================ FILTERS ================================ */}
 
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.filterRow}
-          >
-            {(['All', 'Active', 'Pending', 'Disabled'] as const).map(
-              (item) => {
-                const selected =
-                  statusFilter === item;
+        <View style={styles.filterRow}>
+          <FilterDropdown
+            label="Status"
+            placeholder="All Statuses"
+            value={statusFilter}
+            options={statusFilterOptions}
+            isOpen={openFilter === 'status'}
+            onToggle={() => setOpenFilter((current) => (current === 'status' ? null : 'status'))}
+            onSelect={(item) => {
+              setStatusFilter(item);
+              setOpenFilter(null);
+            }}
+          />
 
-                return (
-                  <Pressable
-                    key={item}
-                    style={[
-                      styles.filterChip,
-                      selected &&
-                        styles.filterChipSelected,
-                    ]}
-                    onPress={() =>
-                      setStatusFilter(item)
-                    }
-                  >
-                    <Text
-                      style={[
-                        styles.filterChipText,
-                        selected &&
-                          styles.filterChipTextSelected,
-                      ]}
-                    >
-                      {item}
-                    </Text>
-                  </Pressable>
-                );
-              }
-            )}
-          </ScrollView>
-
-          <Text style={styles.filterLabel}>
-            Role
-          </Text>
-
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.filterRow}
-          >
-            {(
-              [
-                'All',
-                'Super Admin',
-                'Viewer',
-              ] as const
-            ).map((item) => {
-              const selected =
-                roleFilter === item;
-
-              return (
-                <Pressable
-                  key={item}
-                  style={[
-                    styles.filterChip,
-                    selected &&
-                      styles.filterChipSelected,
-                  ]}
-                  onPress={() =>
-                    setRoleFilter(item)
-                  }
-                >
-                  <Text
-                    style={[
-                      styles.filterChipText,
-                      selected &&
-                        styles.filterChipTextSelected,
-                    ]}
-                  >
-                    {item}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
+          <FilterDropdown
+            label="Role"
+            placeholder="All Roles"
+            value={roleFilter}
+            options={roleFilterOptions}
+            isOpen={openFilter === 'role'}
+            onToggle={() => setOpenFilter((current) => (current === 'role' ? null : 'role'))}
+            onSelect={(item) => {
+              setRoleFilter(item);
+              setOpenFilter(null);
+            }}
+          />
         </View>
 
-        {/* User Count */}
-        <View style={styles.countRow}>
-          <Text style={styles.sectionTitle}>
-            Administrator Accounts
-          </Text>
+        {/* ================================ COUNT ================================ */}
 
+        <View style={[styles.countRow, isWide && styles.countRowWide]}>
+          <Text style={styles.sectionTitle}>Administrator Accounts</Text>
           <Text style={styles.countText}>
-            {filteredUsers.length} of {users.length}{' '}
-            {users.length === 1
-              ? 'user'
-              : 'users'}
+            {filteredUsers.length} of {users.length} {users.length === 1 ? 'user' : 'users'}
           </Text>
         </View>
 
-        {/* Loading */}
+        {/* ================================ LOADING ================================ */}
+
         {loading && (
           <View style={styles.loadingContainer}>
-            <ActivityIndicator
-              size="large"
-            />
-
-            <Text style={styles.loadingText}>
-              Loading users...
-            </Text>
+            <ActivityIndicator size="large" />
+            <Text style={styles.loadingText}>Loading users...</Text>
           </View>
         )}
 
-        {/* Empty */}
-        {!loading &&
-          users.length === 0 && (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>
-                No administrator accounts
-              </Text>
+        {/* ================================ EMPTY ================================ */}
 
-              <Text style={styles.emptyText}>
-                There are currently no administrator
-                profiles in the system.
-              </Text>
+        {!loading && users.length === 0 && (
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyTitle}>No administrator accounts</Text>
+            <Text style={styles.emptyText}>
+              There are currently no administrator profiles in the system.
+            </Text>
 
-              <Link
-                href="/(app)/admin-users/add"
-                asChild
-              >
-                <Pressable
-                  style={styles.emptyButton}
-                >
-                  <Text
-                    style={styles.emptyButtonText}
-                  >
-                    Add First User
-                  </Text>
-                </Pressable>
-              </Link>
-            </View>
-          )}
-
-        {/* Filtered Empty */}
-        {!loading &&
-          users.length > 0 &&
-          filteredUsers.length === 0 && (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>
-                No matching administrators
-              </Text>
-
-              <Text style={styles.emptyText}>
-                Try changing the search text or filters.
-              </Text>
-
+            <Link href="/(app)/admin-users/add" asChild>
               <Pressable
                 style={styles.emptyButton}
-                onPress={() => {
-                  setSearch('');
-                  setStatusFilter('All');
-                  setRoleFilter('All');
-                }}
+                accessibilityRole="button"
+                accessibilityLabel="Add first user"
               >
-                <Text style={styles.emptyButtonText}>
-                  Clear Filters
-                </Text>
+                <Text style={styles.emptyButtonText}>Add First User</Text>
               </Pressable>
-            </View>
-          )}
+            </Link>
+          </View>
+        )}
 
-        {/* Users */}
-        {!loading &&
-          filteredUsers.map((user) => {
-            const isCurrentUser =
-              user.id === profile?.id;
+        {/* ================================ FILTERED EMPTY ================================ */}
 
-            return (
-              <View
-                key={user.id}
-                style={styles.userCard}
-              >
-                {/* User Information */}
-                <View style={styles.userTop}>
-                  <View style={styles.userInfo}>
-                    <Text style={styles.userName}>
-                      {user.full_name}
-                    </Text>
+        {!loading && users.length > 0 && filteredUsers.length === 0 && (
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyTitle}>No matching administrators</Text>
+            <Text style={styles.emptyText}>Try changing the search text or filters.</Text>
 
-                    {isCurrentUser && (
-                      <Text
-                        style={styles.currentBadge}
-                      >
-                        You
-                      </Text>
-                    )}
-                  </View>
+            <Pressable
+              style={styles.emptyButton}
+              onPress={() => {
+                setSearch('');
+                setStatusFilter('All');
+                setRoleFilter('All');
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Clear filters"
+            >
+              <Text style={styles.emptyButtonText}>Clear Filters</Text>
+            </Pressable>
+          </View>
+        )}
 
-                  <View
-                    style={[
-                      styles.statusBadge,
-                      getStatusStyle(
-                        user.status
-                      ),
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.statusText,
-                        getStatusTextStyle(
-                          user.status
-                        ),
-                      ]}
-                    >
-                      {user.status}
-                    </Text>
-                  </View>
-                </View>
+        {/* ================================ USERS ================================ */}
 
-                {/* Role */}
-                <View style={styles.userDetails}>
-                  <View>
-                    <Text style={styles.detailLabel}>
-                      Role
-                    </Text>
+        {!loading && (
+          <View style={isWide && styles.usersGrid}>
+            {paginatedUsers.map((user) => {
+              const isCurrentUser = user.id === profile?.id;
 
-                    <Text style={styles.detailValue}>
-                      {user.role}
-                    </Text>
-                  </View>
+              return (
+                <View key={user.id} style={isWide && styles.usersGridItem}>
+                  <View style={[styles.userCard, isWide && styles.userCardWide]}>
+                    <View style={styles.userTop}>
+                      <View style={styles.userInfo}>
+                        <Text style={styles.userName}>{user.full_name}</Text>
 
-                  <View>
-                    <Text style={styles.detailLabel}>
-                      Approved
-                    </Text>
+                        {isCurrentUser && <Text style={styles.currentBadge}>You</Text>}
+                      </View>
 
-                    <Text style={styles.detailValue}>
-                      {user.approved
-                        ? 'Yes'
-                        : 'No'}
-                    </Text>
-                  </View>
-                </View>
+                      <View style={[styles.statusBadge, getStatusBadgeStyle(user.status)]}>
+                        <Text style={[styles.statusText, getStatusTextStyle(user.status)]}>
+                          {user.status}
+                        </Text>
+                      </View>
+                    </View>
 
-                {/* Actions */}
-                <View style={styles.actions}>
-                  <Pressable
-                    style={styles.secondaryButton}
-                    onPress={() => {
-                      router.push({
-                        pathname: '/admin-users/edit',
-                        params: {
-                          id: user.id,
-                        },
-                      });
-                    }}
-                  >
-                    <Text
-                      style={
-                        styles.secondaryButtonText
-                      }
-                    >
-                      Edit
-                    </Text>
-                  </Pressable>
+                    <View style={styles.userDetails}>
+                      <View>
+                        <Text style={styles.detailLabel}>Role</Text>
+                        <Text style={styles.detailValue}>{user.role}</Text>
+                      </View>
 
-                  {user.status === 'Pending' &&
-                    !isCurrentUser && (
+                      <View>
+                        <Text style={styles.detailLabel}>Approved</Text>
+                        <Text style={styles.detailValue}>{user.approved ? 'Yes' : 'No'}</Text>
+                      </View>
+                    </View>
+
+                    <View style={styles.cardSpacer} />
+
+                    <View style={styles.actions}>
                       <Pressable
-                        style={styles.activationButton}
-                        onPress={() =>
-                          generateActivationLink(user)
-                        }
-                        disabled={activationLoading}
+                        style={styles.secondaryButton}
+                        onPress={() => {
+                          router.push({
+                            pathname: '/admin-users/edit',
+                            params: { id: user.id },
+                          });
+                        }}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Edit ${user.full_name}`}
                       >
-                        <Text
-                          style={
-                            styles.activationButtonText
-                          }
+                        <Text style={styles.secondaryButtonText}>Edit</Text>
+                      </Pressable>
+
+                      {user.status === 'Pending' && !isCurrentUser && (
+                        <Pressable
+                          style={styles.activationButton}
+                          onPress={() => generateActivationCode(user)}
+                          disabled={activationLoading}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Generate activation code for ${user.full_name}`}
                         >
-                          {activationLoading
-                            ? 'Generating...'
-                            : 'Activation Link'}
+                          <Text style={styles.activationButtonText}>
+                            {activationLoading ? 'Generating...' : 'Activation Code'}
+                          </Text>
+                        </Pressable>
+                      )}
+
+                      <Pressable
+                        style={[
+                          styles.secondaryButton,
+                          user.status === 'Disabled' && styles.enableButton,
+                        ]}
+                        onPress={() => {
+                          if (user.id === profile?.id) {
+                            modal.show(
+                              'Action Not Allowed',
+                              'You cannot disable your own administrator account.'
+                            );
+                            return;
+                          }
+
+                          const nextStatus = user.status === 'Active' ? 'Disabled' : 'Active';
+
+                          setStatusConfirmUser(user);
+                          setStatusConfirmNextStatus(nextStatus);
+                          setStatusConfirmVisible(true);
+                        }}
+                        disabled={statusUpdating}
+                        accessibilityRole="button"
+                        accessibilityLabel={
+                          user.status === 'Disabled'
+                            ? `Enable ${user.full_name}`
+                            : `Disable ${user.full_name}`
+                        }
+                      >
+                        <Text style={styles.secondaryButtonText}>
+                          {user.status === 'Disabled' ? 'Enable' : 'Disable'}
                         </Text>
                       </Pressable>
-                    )}
 
-                  <Pressable
-                    style={[
-                      styles.secondaryButton,
-                      user.status === 'Disabled' &&
-                        styles.enableButton,
-                    ]}
-                    onPress={() => {
-                      if (user.id === profile?.id) {
-                        showModal(
-                          'Action Not Allowed',
-                          'You cannot disable your own administrator account.'
-                        );
-                        return;
-                      }
+                      {!isCurrentUser && user.role !== 'Super Admin' && (
+                        <Pressable
+                          style={styles.secondaryButton}
+                          onPress={() => openSetPasswordModal(user)}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Set password for ${user.full_name}`}
+                        >
+                          <Text style={styles.secondaryButtonText}>Set Password</Text>
+                        </Pressable>
+                      )}
 
-                      const nextStatus =
-                        user.status === 'Active'
-                          ? 'Disabled'
-                          : 'Active';
-
-                      setStatusConfirmUser(user);
-                      setStatusConfirmNextStatus(nextStatus);
-                      setStatusConfirmVisible(true);
-                    }}
-                    disabled={statusUpdating}
-                  >
-                    <Text
-                      style={
-                        styles.secondaryButtonText
-                      }
-                    >
-                      {user.status ===
-                      'Disabled'
-                        ? 'Enable'
-                        : 'Disable'}
-                    </Text>
-                  </Pressable>
-
-                  {!isCurrentUser && (
-                    <Pressable
-                      style={styles.deleteButton}
-                      onPress={() => {
-                        setDeleteUser(user);
-                        setDeleteModalVisible(true);
-                      }}
-                      disabled={deleteLoading}
-                    >
-                      <Text
-                        style={
-                          styles.deleteButtonText
-                        }
-                      >
-                        Delete
-                      </Text>
-                    </Pressable>
-                  )}
+                      {!isCurrentUser && (
+                        <Pressable
+                          style={styles.deleteButton}
+                          onPress={() => {
+                            setDeleteUser(user);
+                            setDeleteModalVisible(true);
+                          }}
+                          disabled={deleteLoading}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Delete ${user.full_name}`}
+                        >
+                          <Text style={styles.deleteButtonText}>Delete</Text>
+                        </Pressable>
+                      )}
+                    </View>
+                  </View>
                 </View>
-              </View>
-            );
-          })}
+              );
+            })}
+          </View>
+        )}
 
-        {/* Back */}
-        <Pressable
-          style={styles.backLink}
-          onPress={() => router.back()}
-        >
-          <Text style={styles.backLinkText}>
-            ← Back to Dashboard
-          </Text>
-        </Pressable>
+        {/* ================================ PAGINATION ================================ */}
+
+        {!loading && (
+          <Pagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            onPrev={() => setPage(currentPage - 1)}
+            onNext={() => setPage(currentPage + 1)}
+          />
+        )}
       </ScrollView>
 
-      {/* Activation Link */}
+      {/* ================================ ACTIVATION CODE ================================ */}
+
       {activationModalVisible && (
         <View style={styles.modalOverlay}>
           <View style={styles.activationCard}>
-            <Text style={styles.confirmTitle}>
-              Activation Link
-            </Text>
+            <Text style={styles.confirmTitle}>Activation Code</Text>
 
             <Text style={styles.confirmMessage}>
               {activationUser?.full_name
-                ? `A new activation link has been generated for ${activationUser.full_name}.`
-                : 'A new activation link has been generated.'}
+                ? `A new activation code has been generated for ${activationUser.full_name}. Give it to them directly — the previous code no longer works.`
+                : 'A new activation code has been generated.'}
             </Text>
 
-            <TextInput
-              style={styles.activationLinkInput}
-              value={activationLink}
-              editable={false}
-              multiline
-              selectTextOnFocus
-            />
+            <View style={styles.activationField}>
+              <Text style={styles.activationFieldLabel}>Administrator Name</Text>
+              <Text style={styles.activationFieldValue}>{activationUser?.full_name ?? '—'}</Text>
+            </View>
+
+            <View style={styles.activationField}>
+              <Text style={styles.activationFieldLabel}>Email</Text>
+              <Text style={styles.activationFieldValue}>{activationEmail || '—'}</Text>
+            </View>
+
+            <View style={styles.activationField}>
+              <Text style={styles.activationFieldLabel}>Role</Text>
+              <Text style={styles.activationFieldValue}>{activationUser?.role ?? '—'}</Text>
+            </View>
+
+            <Text style={styles.passwordLabel}>Activation Code</Text>
+
+            <View style={styles.activationCodeContainer}>
+              <Text style={styles.activationCodeText} selectable>
+                {activationCode}
+              </Text>
+            </View>
+
+            <Text style={styles.activationExpiry}>
+              Expires: {formatExpiresAt(activationExpiresAt)}
+            </Text>
 
             <Pressable
               style={styles.copyActivationButton}
-              onPress={copyActivationLink}
-              disabled={!activationLink}
+              onPress={copyActivationCode}
+              disabled={!activationCode}
+              accessibilityRole="button"
+              accessibilityLabel="Copy activation code"
             >
-              <Text
-                style={styles.copyActivationButtonText}
-              >
-                {activationCopied
-                  ? 'Copied!'
-                  : 'Copy Activation Link'}
+              <Text style={styles.copyActivationButtonText}>
+                {activationCopied ? 'Copied!' : 'Copy Activation Code'}
               </Text>
             </Pressable>
 
             <Pressable
-              style={styles.confirmCancelButton}
+              style={styles.closeActivationButton}
               onPress={() => {
                 setActivationModalVisible(false);
                 setActivationUser(null);
-                setActivationLink('');
+                setActivationEmail('');
+                setActivationCode('');
+                setActivationExpiresAt('');
                 setActivationCopied(false);
               }}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
             >
-              <Text style={styles.confirmCancelText}>
-                Close
-              </Text>
+              <Text style={styles.closeActivationText}>Close</Text>
             </Pressable>
           </View>
         </View>
       )}
 
-      {/* Delete Confirmation */}
-      {deleteModalVisible &&
-        deleteUser && (
-          <View style={styles.modalOverlay}>
-            <View style={styles.confirmCard}>
-              <Text style={styles.confirmTitle}>
-                Delete Administrator
+      {/* ================================ SET PASSWORD ================================ */}
+
+      {passwordModalVisible && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.activationCard}>
+            <Text style={styles.confirmTitle}>Set Password</Text>
+
+            <Text style={styles.confirmMessage}>
+              {passwordUser?.full_name
+                ? `Set a password for ${passwordUser.full_name} directly, skipping the invitation link. Share it with them yourself — they can sign in with it right away.`
+                : 'Set a password directly, skipping the invitation link.'}
+            </Text>
+
+            <Text style={styles.passwordLabel}>New Password</Text>
+
+            <TextInput
+              style={styles.passwordInput}
+              value={newPassword}
+              onChangeText={setNewPassword}
+              placeholder="Enter new password"
+              placeholderTextColor={colors.textMuted}
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!passwordSaving}
+              accessibilityLabel="New password"
+            />
+
+            <Text style={styles.passwordLabel}>Confirm Password</Text>
+
+            <TextInput
+              style={styles.passwordInput}
+              value={confirmNewPassword}
+              onChangeText={setConfirmNewPassword}
+              placeholder="Confirm new password"
+              placeholderTextColor={colors.textMuted}
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!passwordSaving}
+              accessibilityLabel="Confirm new password"
+            />
+
+            <Pressable
+              style={[styles.copyActivationButton, passwordSaving && styles.savePasswordButtonDisabled]}
+              onPress={confirmSetPassword}
+              disabled={passwordSaving}
+              accessibilityRole="button"
+              accessibilityLabel="Save password"
+            >
+              <Text style={styles.copyActivationButtonText}>
+                {passwordSaving ? 'Saving...' : 'Save Password'}
               </Text>
+            </Pressable>
 
-              <Text style={styles.confirmMessage}>
-                {`Permanently delete ${deleteUser.full_name}'s administrator account? This cannot be undone.`}
-              </Text>
-
-              <View style={styles.confirmActions}>
-                <Pressable
-                  style={styles.confirmCancelButton}
-                  onPress={() => {
-                    if (deleteLoading) {
-                      return;
-                    }
-
-                    setDeleteModalVisible(false);
-                    setDeleteUser(null);
-                  }}
-                  disabled={deleteLoading}
-                >
-                  <Text style={styles.confirmCancelText}>
-                    Cancel
-                  </Text>
-                </Pressable>
-
-                <Pressable
-                  style={[
-                    styles.confirmActionButton,
-                    styles.confirmDeleteButton,
-                    deleteLoading &&
-                      styles.buttonDisabled,
-                  ]}
-                  onPress={confirmDeleteAdmin}
-                  disabled={deleteLoading}
-                >
-                  <Text style={styles.confirmActionText}>
-                    {deleteLoading
-                      ? 'Deleting...'
-                      : 'Delete'}
-                  </Text>
-                </Pressable>
-              </View>
-            </View>
+            <Pressable
+              style={styles.closeActivationButton}
+              onPress={() => {
+                if (passwordSaving) return;
+                setPasswordModalVisible(false);
+                setPasswordUser(null);
+                setNewPassword('');
+                setConfirmNewPassword('');
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Cancel"
+            >
+              <Text style={styles.closeActivationText}>Cancel</Text>
+            </Pressable>
           </View>
-        )}
+        </View>
+      )}
 
-      {/* Status Confirmation */}
-      {statusConfirmVisible &&
-        statusConfirmUser &&
-        statusConfirmNextStatus && (
-          <View style={styles.modalOverlay}>
-            <View style={styles.confirmCard}>
-              <Text style={styles.confirmTitle}>
-                {statusConfirmNextStatus === 'Disabled'
-                  ? 'Disable Administrator'
-                  : 'Enable Administrator'}
-              </Text>
+      {/* ================================ DELETE CONFIRMATION ================================ */}
 
-              <Text style={styles.confirmMessage}>
-                {statusConfirmNextStatus === 'Disabled'
-                  ? `Disable ${statusConfirmUser.full_name}'s administrator account? They will no longer be able to access the dashboard.`
-                  : `Enable ${statusConfirmUser.full_name}'s administrator account?`}
-              </Text>
-
-              <View style={styles.confirmActions}>
-                <Pressable
-                  style={styles.confirmCancelButton}
-                  onPress={() => {
-                    if (statusUpdating) {
-                      return;
-                    }
-
-                    setStatusConfirmVisible(false);
-                    setStatusConfirmUser(null);
-                    setStatusConfirmNextStatus(null);
-                  }}
-                  disabled={statusUpdating}
-                >
-                  <Text style={styles.confirmCancelText}>
-                    Cancel
-                  </Text>
-                </Pressable>
-
-                <Pressable
-                  style={[
-                    styles.confirmActionButton,
-                    statusConfirmNextStatus === 'Disabled'
-                      ? styles.confirmDisableButton
-                      : styles.confirmEnableButton,
-                    statusUpdating &&
-                      styles.buttonDisabled,
-                  ]}
-                  onPress={confirmStatusChange}
-                  disabled={statusUpdating}
-                >
-                  <Text style={styles.confirmActionText}>
-                    {statusUpdating
-                      ? 'Updating...'
-                      : statusConfirmNextStatus === 'Disabled'
-                        ? 'Disable'
-                        : 'Enable'}
-                  </Text>
-                </Pressable>
-              </View>
-            </View>
-          </View>
-        )}
-
-      {/* Popup */}
-      <AppModal
-        visible={modalVisible}
-        title={modalTitle}
-        message={modalMessage}
-        buttonText="OK"
-        onClose={() =>
-          setModalVisible(false)
+      <ConfirmDialog
+        visible={deleteModalVisible && !!deleteUser}
+        title="Delete Administrator"
+        message={
+          deleteUser
+            ? `Permanently delete ${deleteUser.full_name}'s administrator account? This cannot be undone.`
+            : ''
         }
+        actionText={deleteLoading ? 'Deleting...' : 'Delete'}
+        actionVariant="danger"
+        loading={deleteLoading}
+        onCancel={() => {
+          if (deleteLoading) return;
+          setDeleteModalVisible(false);
+          setDeleteUser(null);
+        }}
+        onConfirm={confirmDeleteAdmin}
+      />
+
+      {/* ================================ STATUS CONFIRMATION ================================ */}
+
+      <ConfirmDialog
+        visible={statusConfirmVisible && !!statusConfirmUser && !!statusConfirmNextStatus}
+        title={
+          statusConfirmNextStatus === 'Disabled' ? 'Disable Administrator' : 'Enable Administrator'
+        }
+        message={
+          statusConfirmUser
+            ? statusConfirmNextStatus === 'Disabled'
+              ? `Disable ${statusConfirmUser.full_name}'s administrator account? They will no longer be able to access the dashboard.`
+              : `Enable ${statusConfirmUser.full_name}'s administrator account?`
+            : ''
+        }
+        actionText={
+          statusUpdating ? 'Updating...' : statusConfirmNextStatus === 'Disabled' ? 'Disable' : 'Enable'
+        }
+        actionVariant={statusConfirmNextStatus === 'Disabled' ? 'danger' : 'success'}
+        loading={statusUpdating}
+        onCancel={() => {
+          if (statusUpdating) return;
+          setStatusConfirmVisible(false);
+          setStatusConfirmUser(null);
+          setStatusConfirmNextStatus(null);
+        }}
+        onConfirm={confirmStatusChange}
+      />
+
+      {/* ================================ POPUP ================================ */}
+
+      <AppModal
+        visible={modal.visible}
+        title={modal.title}
+        message={modal.message}
+        buttonText="OK"
+        onClose={modal.hide}
       />
     </View>
   );
@@ -1229,41 +962,31 @@ export default function AdminUsersScreen() {
 
 /*
  * ----------------------------------------
- * Status Styles
+ * Status style helpers
  * ----------------------------------------
  */
 
-function getStatusStyle(
-  status: AdminStatus
-) {
+function getStatusBadgeStyle(status: AdminStatus) {
   switch (status) {
     case 'Active':
-      return styles.statusActive;
-
+      return { backgroundColor: colors.adminStatusActiveBg };
     case 'Pending':
-      return styles.statusPending;
-
+      return { backgroundColor: colors.adminStatusPendingBg };
     case 'Disabled':
-      return styles.statusDisabled;
-
+      return { backgroundColor: colors.adminStatusDisabledBg };
     default:
       return {};
   }
 }
 
-function getStatusTextStyle(
-  status: AdminStatus
-) {
+function getStatusTextStyle(status: AdminStatus) {
   switch (status) {
     case 'Active':
-      return styles.statusActiveText;
-
+      return { color: colors.adminStatusActiveText };
     case 'Pending':
-      return styles.statusPendingText;
-
+      return { color: colors.adminStatusPendingText };
     case 'Disabled':
-      return styles.statusDisabledText;
-
+      return { color: colors.adminStatusDisabledText };
     default:
       return {};
   }
@@ -1278,7 +1001,7 @@ function getStatusTextStyle(
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: colors.background,
   },
 
   container: {
@@ -1291,11 +1014,15 @@ const styles = StyleSheet.create({
   },
 
   header: {
+    flexDirection: 'column',
+    marginBottom: 24,
+    gap: 16,
+  },
+
+  headerWide: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 24,
-    gap: 20,
   },
 
   headerText: {
@@ -1305,25 +1032,26 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 30,
     fontWeight: '700',
-    color: '#111827',
+    color: colors.textPrimary,
   },
 
   subtitle: {
     fontSize: 14,
     lineHeight: 20,
-    color: '#6b7280',
+    color: colors.textSecondary,
     marginTop: 6,
   },
 
   addButton: {
-    backgroundColor: '#111827',
+    alignSelf: 'flex-start',
+    backgroundColor: colors.textPrimary,
     paddingHorizontal: 16,
     paddingVertical: 11,
-    borderRadius: 9,
+    borderRadius: radii.sm,
   },
 
   addButtonText: {
-    color: '#ffffff',
+    color: colors.surface,
     fontSize: 14,
     fontWeight: '600',
   },
@@ -1335,124 +1063,93 @@ const styles = StyleSheet.create({
   searchInput: {
     height: 48,
     borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 9,
+    borderColor: colors.borderInput,
+    borderRadius: radii.sm,
     paddingHorizontal: 14,
     fontSize: 14,
-    color: '#111827',
-    backgroundColor: '#ffffff',
-  },
-
-  filterSection: {
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 14,
-    padding: 16,
-    marginBottom: 20,
-  },
-
-  filterLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#6b7280',
-    marginBottom: 8,
+    color: colors.textPrimary,
+    backgroundColor: colors.surface,
   },
 
   filterRow: {
-    gap: 8,
-    paddingBottom: 14,
-  },
-
-  filterChip: {
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 20,
-    paddingHorizontal: 13,
-    paddingVertical: 8,
-    backgroundColor: '#ffffff',
-  },
-
-  filterChipSelected: {
-    borderColor: '#111827',
-    backgroundColor: '#111827',
-  },
-
-  filterChipText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#4b5563',
-  },
-
-  filterChipTextSelected: {
-    color: '#ffffff',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 20,
+    zIndex: 1000,
   },
 
   currentUserCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 14,
+    borderColor: colors.border,
+    borderRadius: radii.lg,
     padding: 18,
     marginBottom: 25,
   },
 
   currentUserLabel: {
     fontSize: 12,
-    color: '#6b7280',
+    color: colors.textSecondary,
   },
 
   currentUserName: {
     fontSize: 17,
     fontWeight: '700',
-    color: '#111827',
+    color: colors.textPrimary,
     marginTop: 4,
   },
 
   currentUserRole: {
     fontSize: 13,
-    color: '#6b7280',
+    color: colors.textSecondary,
     marginTop: 3,
   },
 
   countRow: {
+    flexDirection: 'column',
+    marginBottom: 12,
+    gap: 4,
+  },
+
+  countRowWide: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    gap: 12,
   },
 
   sectionTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#111827',
+    color: colors.textPrimary,
   },
 
   countText: {
     fontSize: 13,
-    color: '#6b7280',
+    color: colors.textSecondary,
   },
 
   loadingContainer: {
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 14,
+    borderColor: colors.border,
+    borderRadius: radii.lg,
     padding: 40,
     alignItems: 'center',
   },
 
   loadingText: {
     fontSize: 14,
-    color: '#6b7280',
+    color: colors.textSecondary,
     marginTop: 12,
   },
 
   emptyCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 14,
+    borderColor: colors.border,
+    borderRadius: radii.lg,
     padding: 30,
     alignItems: 'center',
   },
@@ -1460,19 +1157,19 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#111827',
+    color: colors.textPrimary,
   },
 
   emptyText: {
     fontSize: 14,
-    color: '#6b7280',
+    color: colors.textSecondary,
     textAlign: 'center',
     lineHeight: 20,
     marginTop: 6,
   },
 
   emptyButton: {
-    backgroundColor: '#111827',
+    backgroundColor: colors.textPrimary,
     paddingHorizontal: 18,
     paddingVertical: 11,
     borderRadius: 8,
@@ -1480,7 +1177,7 @@ const styles = StyleSheet.create({
   },
 
   emptyButtonText: {
-    color: '#ffffff',
+    color: colors.surface,
     fontSize: 14,
     fontWeight: '600',
   },
@@ -1498,83 +1195,51 @@ const styles = StyleSheet.create({
     zIndex: 100,
   },
 
-  confirmCard: {
-    width: '100%',
-    maxWidth: 460,
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    padding: 22,
-  },
-
   confirmTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#111827',
+    color: colors.textPrimary,
   },
 
   confirmMessage: {
     fontSize: 14,
     lineHeight: 21,
-    color: '#6b7280',
+    color: colors.textSecondary,
     marginTop: 8,
   },
 
-  confirmActions: {
+  usersGrid: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 10,
-    marginTop: 22,
+    flexWrap: 'wrap',
+    alignItems: 'stretch',
+    marginHorizontal: -8,
   },
 
-  confirmCancelButton: {
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-
-  confirmCancelText: {
-    color: '#374151',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-
-  confirmActionButton: {
-    borderRadius: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-
-  confirmDeleteButton: {
-    backgroundColor: '#dc2626',
-  },
-
-  confirmDisableButton: {
-    backgroundColor: '#dc2626',
-  },
-
-  confirmEnableButton: {
-    backgroundColor: '#15803d',
-  },
-
-  confirmActionText: {
-    color: '#ffffff',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-
-  buttonDisabled: {
-    opacity: 0.6,
+  usersGridItem: {
+    width: '50%',
+    paddingHorizontal: 8,
   },
 
   userCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 14,
+    borderColor: colors.border,
+    borderRadius: radii.lg,
     padding: 18,
     marginBottom: 12,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    elevation: 2,
+  },
+
+  userCardWide: {
+    flex: 1,
+  },
+
+  cardSpacer: {
+    flex: 1,
   },
 
   userTop: {
@@ -1594,14 +1259,14 @@ const styles = StyleSheet.create({
   userName: {
     fontSize: 17,
     fontWeight: '700',
-    color: '#111827',
+    color: colors.textPrimary,
   },
 
   currentBadge: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#2563eb',
-    backgroundColor: '#eff6ff',
+    color: colors.accent,
+    backgroundColor: colors.accentBg,
     paddingHorizontal: 7,
     paddingVertical: 3,
     borderRadius: 10,
@@ -1618,63 +1283,39 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  statusActive: {
-    backgroundColor: '#ecfdf5',
-  },
-
-  statusActiveText: {
-    color: '#047857',
-  },
-
-  statusPending: {
-    backgroundColor: '#fffbeb',
-  },
-
-  statusPendingText: {
-    color: '#b45309',
-  },
-
-  statusDisabled: {
-    backgroundColor: '#fef2f2',
-  },
-
-  statusDisabledText: {
-    color: '#b91c1c',
-  },
-
   userDetails: {
     flexDirection: 'row',
     gap: 50,
     marginTop: 18,
     paddingTop: 15,
     borderTopWidth: 1,
-    borderTopColor: '#f1f5f9',
+    borderTopColor: colors.background,
   },
 
   detailLabel: {
     fontSize: 11,
-    color: '#9ca3af',
+    color: colors.textMuted,
     marginBottom: 3,
   },
 
   detailValue: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#374151',
+    color: colors.textLabel,
   },
 
   activationCard: {
     width: '100%',
     maxWidth: 560,
-    backgroundColor: '#ffffff',
-    borderRadius: 14,
+    backgroundColor: colors.surface,
+    borderRadius: radii.lg,
     padding: 20,
   },
 
   activationButton: {
     borderWidth: 1,
-    borderColor: '#2563eb',
-    backgroundColor: '#eff6ff',
+    borderColor: colors.accent,
+    backgroundColor: colors.accentBg,
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 7,
@@ -1683,68 +1324,133 @@ const styles = StyleSheet.create({
   activationButtonText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#2563eb',
+    color: colors.accent,
   },
 
-  activationLinkInput: {
-    minHeight: 110,
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 8,
-    padding: 10,
+  activationField: {
+    marginTop: 12,
+  },
+
+  activationFieldLabel: {
     fontSize: 12,
-    lineHeight: 18,
-    color: '#374151',
-    backgroundColor: '#f9fafb',
-    textAlignVertical: 'top',
+    color: colors.textSecondary,
+    marginBottom: 3,
+  },
+
+  activationFieldValue: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.textLabel,
+  },
+
+  activationCodeContainer: {
+    borderWidth: 1,
+    borderColor: colors.borderInput,
+    borderRadius: 8,
+    backgroundColor: colors.background,
+    padding: 14,
+    alignItems: 'center',
+  },
+
+  activationCodeText: {
+    fontSize: 20,
+    fontWeight: '700',
+    letterSpacing: 2,
+    color: colors.textPrimary,
+  },
+
+  activationExpiry: {
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: 8,
+  },
+
+  passwordLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.textLabel,
+    marginTop: 16,
+    marginBottom: 8,
+  },
+
+  passwordInput: {
+    height: 46,
+    borderWidth: 1,
+    borderColor: colors.borderInput,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    fontSize: 14,
+    color: colors.textPrimary,
+    backgroundColor: colors.surface,
+  },
+
+  savePasswordButtonDisabled: {
+    opacity: 0.6,
   },
 
   copyActivationButton: {
     height: 46,
     borderRadius: 8,
-    backgroundColor: '#111827',
+    backgroundColor: colors.textPrimary,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 12,
   },
 
   copyActivationButtonText: {
-    color: '#ffffff',
+    color: colors.surface,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+
+  closeActivationButton: {
+    borderWidth: 1,
+    borderColor: colors.borderInput,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    marginTop: 10,
+  },
+
+  closeActivationText: {
+    color: colors.textLabel,
     fontSize: 13,
     fontWeight: '600',
   },
 
   actions: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
     marginTop: 18,
     paddingTop: 15,
     borderTopWidth: 1,
-    borderTopColor: '#f1f5f9',
+    borderTopColor: colors.background,
   },
 
   secondaryButton: {
     borderWidth: 1,
-    borderColor: '#d1d5db',
+    borderColor: colors.borderInput,
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 7,
   },
 
   enableButton: {
-    borderColor: '#15803d',
-    backgroundColor: '#f0fdf4',
+    borderColor: colors.success,
+    backgroundColor: colors.successBg,
   },
 
   secondaryButtonText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#374151',
+    color: colors.textLabel,
   },
 
   deleteButton: {
     borderWidth: 1,
-    borderColor: '#fecaca',
+    borderColor: colors.dangerBorder,
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 7,
@@ -1753,7 +1459,7 @@ const styles = StyleSheet.create({
   deleteButtonText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#dc2626',
+    color: colors.danger,
   },
 
   backLink: {
@@ -1764,7 +1470,7 @@ const styles = StyleSheet.create({
 
   backLinkText: {
     fontSize: 14,
-    color: '#6b7280',
+    color: colors.textSecondary,
     fontWeight: '600',
   },
 
@@ -1778,19 +1484,19 @@ const styles = StyleSheet.create({
   deniedTitle: {
     fontSize: 24,
     fontWeight: '700',
-    color: '#111827',
+    color: colors.textPrimary,
   },
 
   deniedText: {
     fontSize: 14,
-    color: '#6b7280',
+    color: colors.textSecondary,
     textAlign: 'center',
     marginTop: 8,
     lineHeight: 20,
   },
 
   backButton: {
-    backgroundColor: '#111827',
+    backgroundColor: colors.textPrimary,
     paddingHorizontal: 18,
     paddingVertical: 11,
     borderRadius: 8,
@@ -1798,7 +1504,7 @@ const styles = StyleSheet.create({
   },
 
   backButtonText: {
-    color: '#ffffff',
+    color: colors.surface,
     fontSize: 14,
     fontWeight: '600',
   },

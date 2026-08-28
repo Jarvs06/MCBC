@@ -6,6 +6,8 @@ import {
   View,
 } from 'react-native';
 
+import { colors, radii } from '@/constants/theme';
+
 type AppModalProps = {
   visible: boolean;
   title: string;
@@ -27,72 +29,43 @@ export default function AppModal({
   onConfirm,
   confirmButtonText = 'Confirm',
 }: AppModalProps) {
-  const isConfirmation =
-    !!onConfirm;
+  const isConfirmation = !!onConfirm;
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onClose}
-    >
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.overlay}>
         <View style={styles.modal}>
-          <Text style={styles.title}>
-            {title}
-          </Text>
-
-          <Text style={styles.message}>
-            {message}
-          </Text>
+          <Text style={styles.title}>{title}</Text>
+          <Text style={styles.message}>{message}</Text>
 
           {isConfirmation ? (
-            <View
-              style={
-                styles.actions
-              }
-            >
+            <View style={styles.actions}>
               <Pressable
-                style={
-                  styles.cancelButton
-                }
+                style={styles.cancelButton}
                 onPress={onClose}
+                accessibilityRole="button"
+                accessibilityLabel={cancelButtonText}
               >
-                <Text
-                  style={
-                    styles.cancelButtonText
-                  }
-                >
-                  {cancelButtonText}
-                </Text>
+                <Text style={styles.cancelButtonText}>{cancelButtonText}</Text>
               </Pressable>
 
               <Pressable
-                style={
-                  styles.confirmButton
-                }
+                style={styles.confirmButton}
                 onPress={onConfirm}
+                accessibilityRole="button"
+                accessibilityLabel={confirmButtonText}
               >
-                <Text
-                  style={
-                    styles.confirmButtonText
-                  }
-                >
-                  {confirmButtonText}
-                </Text>
+                <Text style={styles.confirmButtonText}>{confirmButtonText}</Text>
               </Pressable>
             </View>
           ) : (
             <Pressable
               style={styles.button}
               onPress={onClose}
+              accessibilityRole="button"
+              accessibilityLabel={buttonText}
             >
-              <Text
-                style={styles.buttonText}
-              >
-                {buttonText}
-              </Text>
+              <Text style={styles.buttonText}>{buttonText}</Text>
             </Pressable>
           )}
         </View>
@@ -104,8 +77,7 @@ export default function AppModal({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor:
-      'rgba(0, 0, 0, 0.45)',
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
@@ -114,14 +86,11 @@ const styles = StyleSheet.create({
   modal: {
     width: '100%',
     maxWidth: 420,
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
+    backgroundColor: colors.surface,
+    borderRadius: radii.lg + 2,
     padding: 24,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 8,
-    },
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.15,
     shadowRadius: 20,
     elevation: 10,
@@ -130,13 +99,13 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#111827',
+    color: colors.textPrimary,
   },
 
   message: {
     fontSize: 15,
     lineHeight: 22,
-    color: '#6b7280',
+    color: colors.textSecondary,
     marginTop: 10,
   },
 
@@ -150,34 +119,34 @@ const styles = StyleSheet.create({
 
   cancelButton: {
     borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 9,
+    borderColor: colors.borderInput,
+    borderRadius: radii.sm,
     paddingVertical: 12,
     paddingHorizontal: 18,
   },
 
   cancelButtonText: {
-    color: '#374151',
+    color: colors.textLabel,
     fontSize: 14,
     fontWeight: '600',
   },
 
   confirmButton: {
-    backgroundColor: '#b91c1c',
-    borderRadius: 9,
+    backgroundColor: colors.danger,
+    borderRadius: radii.sm,
     paddingVertical: 12,
     paddingHorizontal: 18,
   },
 
   confirmButtonText: {
-    color: '#ffffff',
+    color: colors.surface,
     fontSize: 14,
     fontWeight: '600',
   },
 
   button: {
-    backgroundColor: '#111827',
-    borderRadius: 9,
+    backgroundColor: colors.textPrimary,
+    borderRadius: radii.sm,
     paddingVertical: 12,
     paddingHorizontal: 22,
     alignSelf: 'flex-end',
@@ -185,7 +154,7 @@ const styles = StyleSheet.create({
   },
 
   buttonText: {
-    color: '#ffffff',
+    color: colors.surface,
     fontSize: 14,
     fontWeight: '600',
   },

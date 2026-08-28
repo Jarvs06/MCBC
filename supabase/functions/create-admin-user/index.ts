@@ -25,6 +25,51 @@ function jsonResponse(
   );
 }
 
+/*
+ * ========================================
+ * Activation code
+ * ========================================
+ *
+ * Kept in sync with regenerate-admin-activation-code, which
+ * generates a replacement code the same way later.
+ *
+ * Codes are never stored raw — only a SHA-256 hash. The raw code
+ * is returned to the calling Super Admin exactly once, in this
+ * function's response, and must never be logged.
+ *
+ * Alphabet excludes visually ambiguous characters (0/O, 1/I/L) and
+ * has exactly 32 symbols so `byte % 32` has no modulo bias.
+ */
+const CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+const CODE_LENGTH = 10;
+const CODE_EXPIRY_MS = 24 * 60 * 60 * 1000;
+
+function generateActivationCode(): string {
+  const bytes = new Uint8Array(CODE_LENGTH);
+  crypto.getRandomValues(bytes);
+
+  let code = "";
+
+  for (let i = 0; i < CODE_LENGTH; i++) {
+    code += CODE_ALPHABET[bytes[i] % CODE_ALPHABET.length];
+  }
+
+  return code;
+}
+
+function normalizeCode(input: string): string {
+  return input.trim().toUpperCase().replace(/[\s-]+/g, "");
+}
+
+async function hashCode(normalized: string): Promise<string> {
+  const data = new TextEncoder().encode(normalized);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 Deno.serve(async (req: Request) => {
   /*
    * ========================================
@@ -443,7 +488,8 @@ Deno.serve(async (req: Request) => {
      * createUser() does not send confirmation
      * emails.
      *
-     * We generate the invitation link below.
+     * We generate an activation code below
+     * instead.
      */
 
     const {
@@ -492,13 +538,17 @@ Deno.serve(async (req: Request) => {
      *
      * The account is approved by the
      * Super Admin, but activation remains
-     * a separate step.
+     * a separate step: the invited user must
+     * still set their own password (or a Super
+     * Admin sets one via set-admin-password)
+     * before this becomes "Active".
      *
-     * We intentionally do not set:
-     *
-     * status = "Active"
-     *
-     * here.
+     * status is set explicitly here rather than
+     * left to the admin_profiles table's column
+     * default, which is "Active" — relying on
+     * that default previously created accounts
+     * that were fully activated before anyone had
+     * set a password.
      */
 
     const {
@@ -515,6 +565,7 @@ Deno.serve(async (req: Request) => {
             fullName,
           role,
           approved: true,
+          status: "Pending",
         });
 
     /*
@@ -547,45 +598,59 @@ Deno.serve(async (req: Request) => {
 
     /*
      * ========================================
-     * Generate invitation link
+     * Generate activation code
      * ========================================
      *
-     * IMPORTANT:
-     *
-     * generateLink() creates the action
-     * link but does NOT send an email.
-     *
-     * This allows your church to operate
-     * without an external SMTP provider.
+     * Replaces the old emailed/copied invitation link. The raw
+     * code is only ever held in memory here and in the response
+     * below — the database only ever sees its SHA-256 hash.
      */
 
-    const {
-      data: inviteData,
-      error:
-        inviteError,
-    } =
-      await supabaseAdmin.auth.admin.generateLink(
-        {
-          type: "invite",
-          email,
-        }
+    const rawCode =
+      generateActivationCode();
+
+    const normalizedCode =
+      normalizeCode(rawCode);
+
+    const codeHash =
+      await hashCode(
+        normalizedCode
       );
+
+    const expiresAt =
+      new Date(
+        Date.now() +
+          CODE_EXPIRY_MS
+      ).toISOString();
+
+    const {
+      error:
+        insertCodeError,
+    } =
+      await supabaseAdmin
+        .from(
+          "admin_activation_codes"
+        )
+        .insert({
+          admin_id: newUserId,
+          code_hash: codeHash,
+          expires_at: expiresAt,
+          created_by: user.id,
+        });
 
     /*
      * ========================================
-     * Roll back everything if the invite
-     * link cannot be generated
+     * Roll back everything if the code
+     * cannot be stored
      * ========================================
      */
 
     if (
-      inviteError ||
-      !inviteData?.properties
-        ?.action_link
+      insertCodeError
     ) {
       console.error(
-        "Generate invitation link error:",
-        inviteError
+        "Store activation code error:",
+        insertCodeError
       );
 
       /*
@@ -613,25 +678,22 @@ Deno.serve(async (req: Request) => {
       return jsonResponse(
         {
           error:
-            "Failed to generate administrator activation link.",
+            "Failed to generate an administrator activation code.",
         },
         500
       );
     }
-
-    const activationLink =
-      inviteData.properties
-        .action_link;
 
     /*
      * ========================================
      * Success
      * ========================================
      *
-     * The activation link is returned to
-     * the authenticated Super Admin.
+     * The raw activation code is returned to
+     * the authenticated Super Admin exactly
+     * once — it cannot be retrieved again.
      *
-     * DO NOT log the link.
+     * DO NOT log the code.
      */
 
     return jsonResponse(
@@ -639,7 +701,7 @@ Deno.serve(async (req: Request) => {
         success: true,
 
         message:
-          "User successfully registered. Activation link generated.",
+          "User successfully registered. Activation code generated.",
 
         user: {
           id: newUserId,
@@ -650,8 +712,11 @@ Deno.serve(async (req: Request) => {
           approved: true,
         },
 
-        activation_link:
-          activationLink,
+        activation_code:
+          rawCode,
+
+        expires_at:
+          expiresAt,
       },
       201
     );

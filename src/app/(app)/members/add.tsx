@@ -11,36 +11,19 @@ import {
 } from 'react-native';
 
 import AppModal from '@/components/AppModal';
+import { colors, radii } from '@/constants/theme';
 import { useAuth } from '@/contexts/AuthContext';
+import { useAppModal } from '@/hooks/useAppModal';
+import {
+  formatMemberName,
+  normalizeOptionalText,
+  normalizeRequiredText,
+  parseDateOnly,
+  todayUTC,
+} from '@/lib/memberHelpers';
 import { supabase } from '@/lib/supabase';
 
 type Gender = 'Male' | 'Female';
-
-function normalizeOptionalText(
-  value: string | null | undefined
-) {
-  const normalized =
-    (value ?? '')
-      .replace(/\u00a0/g, ' ')
-      .trim();
-
-  if (
-    normalized.toLowerCase() ===
-    'not mentioned'
-  ) {
-    return '';
-  }
-
-  return normalized;
-}
-
-function normalizeRequiredText(
-  value: string | null | undefined
-) {
-  return normalizeOptionalText(
-    value
-  );
-}
 
 type MemberOption = {
   id: string;
@@ -54,14 +37,7 @@ type MemberOption = {
 // Member Groups
 // ========================================
 
-const memberGroups = [
-  'General',
-  'Children',
-  'Men',
-  'Women',
-  'Youth',
-  'Young Professional',
-] as const;
+const memberGroups = ['General', 'Children', 'Men', 'Women', 'Youth', 'Young Professional'] as const;
 
 // ========================================
 // Ministries
@@ -79,116 +55,58 @@ const ministries = [
 ];
 
 export default function AddMemberScreen() {
-  const {
-    isSuperAdmin,
-    isActive,
-  } = useAuth();
+  const { isSuperAdmin, isActive } = useAuth();
 
   // ========================================
   // Form fields
   // ========================================
 
-  const [memberNo, setMemberNo] =
-    useState('');
-
-  const [firstName, setFirstName] =
-    useState('');
-
-  const [middleName, setMiddleName] =
-    useState('');
-
-  const [lastName, setLastName] =
-    useState('');
-
-  const [suffix, setSuffix] =
-    useState('');
-
-  const [birthDate, setBirthDate] =
-    useState('');
-
-  const [gender, setGender] =
-    useState<Gender>('Male');
-
-  const [spouseId, setSpouseId] =
-    useState<string | null>(null);
-
-  const [weddingDate, setWeddingDate] =
-    useState('');
-
-  const [contactNo, setContactNo] =
-    useState('');
-
-  const [address, setAddress] =
-    useState('');
-
-  const [baptized, setBaptized] =
-    useState(true);
-
-  const [memberGroup, setMemberGroup] =
-    useState('General');
-
-  const [ministry, setMinistry] =
-    useState('None');
+  const [memberNo, setMemberNo] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [middleName, setMiddleName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [suffix, setSuffix] = useState('');
+  const [birthDate, setBirthDate] = useState('');
+  const [gender, setGender] = useState<Gender>('Male');
+  const [spouseId, setSpouseId] = useState<string | null>(null);
+  const [weddingDate, setWeddingDate] = useState('');
+  const [contactNo, setContactNo] = useState('');
+  const [address, setAddress] = useState('');
+  const [baptized, setBaptized] = useState(true);
+  const [memberGroup, setMemberGroup] = useState('General');
+  const [ministry, setMinistry] = useState('None');
 
   // ========================================
   // Spouse
   // ========================================
 
-  const [members, setMembers] =
-    useState<MemberOption[]>([]);
-
-  const [loadingMembers, setLoadingMembers] =
-    useState(false);
-
-  const [showSpouseList, setShowSpouseList] =
-    useState(false);
+  const [members, setMembers] = useState<MemberOption[]>([]);
+  const [loadingMembers, setLoadingMembers] = useState(false);
+  const [showSpouseList, setShowSpouseList] = useState(false);
 
   // ========================================
   // Dropdowns
   // ========================================
 
-  const [
-    showMemberGroupList,
-    setShowMemberGroupList,
-  ] = useState(false);
-
-  const [
-    showMinistryList,
-    setShowMinistryList,
-  ] = useState(false);
+  const [showMemberGroupList, setShowMemberGroupList] = useState(false);
+  const [showMinistryList, setShowMinistryList] = useState(false);
 
   // ========================================
   // Submit
   // ========================================
 
-  const [loading, setLoading] =
-    useState(false);
+  const [loading, setLoading] = useState(false);
 
   // ========================================
   // Modal
   // ========================================
 
-  const [modalVisible, setModalVisible] =
-    useState(false);
+  const modal = useAppModal();
+  const [success, setSuccess] = useState(false);
 
-  const [modalTitle, setModalTitle] =
-    useState('');
-
-  const [modalMessage, setModalMessage] =
-    useState('');
-
-  const [success, setSuccess] =
-    useState(false);
-
-  function showModal(
-    title: string,
-    message: string,
-    isSuccess = false
-  ) {
-    setModalTitle(title);
-    setModalMessage(message);
+  function finish(title: string, message: string, isSuccess = false) {
     setSuccess(isSuccess);
-    setModalVisible(true);
+    modal.show(title, message);
   }
 
   // ========================================
@@ -200,27 +118,23 @@ export default function AddMemberScreen() {
       setLoadingMembers(true);
 
       try {
-        const { data, error } =
-          await supabase
-            .from('members')
-            .select(
-              `
-                id,
-                first_name,
-                middle_name,
-                last_name,
-                suffix
-              `
-            )
-            .eq('status', 'Active');
+        const { data, error } = await supabase
+          .from('members')
+          .select(
+            `
+              id,
+              first_name,
+              middle_name,
+              last_name,
+              suffix
+            `
+          )
+          .eq('status', 'Active');
 
         if (error) {
-          console.error(
-            '[MEMBER] Failed to load members:',
-            error
-          );
+          console.error('[MEMBER] Failed to load members:', error);
 
-          showModal(
+          finish(
             'Unable to Load Members',
             'We could not load the existing members for spouse selection.'
           );
@@ -233,15 +147,9 @@ export default function AddMemberScreen() {
           return;
         }
 
-        console.log(
-          '[MEMBER] Loaded encrypted members:',
-          data.length
-        );
+        console.log('[MEMBER] Loaded encrypted members:', data.length);
 
-        const {
-          data: cryptoResponse,
-          error: cryptoError,
-        } = await supabase.functions.invoke(
+        const { data: cryptoResponse, error: cryptoError } = await supabase.functions.invoke(
           'member-crypto',
           {
             body: {
@@ -252,91 +160,46 @@ export default function AddMemberScreen() {
         );
 
         if (cryptoError) {
-          console.error(
-            '[MEMBER] Decryption failed:',
-            cryptoError
-          );
+          console.error('[MEMBER] Decryption failed:', cryptoError);
 
-          showModal(
-            'Unable to Load Members',
-            'We could not securely decrypt the existing members.'
-          );
+          finish('Unable to Load Members', 'We could not securely decrypt the existing members.');
 
           return;
         }
 
-        if (
-          !cryptoResponse?.success ||
-          !Array.isArray(cryptoResponse.data)
-        ) {
-          console.error(
-            '[MEMBER] Invalid decryption response:',
-            cryptoResponse
-          );
+        if (!cryptoResponse?.success || !Array.isArray(cryptoResponse.data)) {
+          console.error('[MEMBER] Invalid decryption response:', cryptoResponse);
 
-          showModal(
-            'Decryption Failed',
-            'The existing member information could not be decrypted.'
-          );
+          finish('Decryption Failed', 'The existing member information could not be decrypted.');
 
           return;
         }
 
-        const decryptedMembers =
-          (
-            cryptoResponse.data as MemberOption[]
-          ).map((member) => ({
-            ...member,
-            first_name:
-              normalizeRequiredText(
-                member.first_name
-              ),
-            middle_name:
-              normalizeOptionalText(
-                member.middle_name
-              ) || null,
-            last_name:
-              normalizeRequiredText(
-                member.last_name
-              ),
-            suffix:
-              normalizeOptionalText(
-                member.suffix
-              ) || null,
-          }));
+        const decryptedMembers = (cryptoResponse.data as MemberOption[]).map((member) => ({
+          ...member,
+          first_name: normalizeRequiredText(member.first_name),
+          middle_name: normalizeOptionalText(member.middle_name) || null,
+          last_name: normalizeRequiredText(member.last_name),
+          suffix: normalizeOptionalText(member.suffix) || null,
+        }));
 
-        const sortedMembers =
-          [...decryptedMembers].sort((a, b) => {
-            const lastName =
-              a.last_name.localeCompare(
-                b.last_name
-              );
+        const sortedMembers = [...decryptedMembers].sort((a, b) => {
+          const lastName = a.last_name.localeCompare(b.last_name);
 
-            if (lastName !== 0) {
-              return lastName;
-            }
+          if (lastName !== 0) {
+            return lastName;
+          }
 
-            return a.first_name.localeCompare(
-              b.first_name
-            );
-          });
+          return a.first_name.localeCompare(b.first_name);
+        });
 
         setMembers(sortedMembers);
 
-        console.log(
-          '[MEMBER] Members decrypted successfully:',
-          sortedMembers.length
-        );
+        console.log('[MEMBER] Members decrypted successfully:', sortedMembers.length);
       } catch (error) {
-        console.error(
-          '[MEMBER] Unexpected member loading error:',
-          error
-        );
+        console.error('[MEMBER] Unexpected member loading error:', error);
 
-        showModal(
-          'Unable to Load Members',
-          'Something went wrong while loading members.'
-        );
+        finish('Unable to Load Members', 'Something went wrong while loading members.');
       } finally {
         setLoadingMembers(false);
       }
@@ -345,85 +208,21 @@ export default function AddMemberScreen() {
     if (isSuperAdmin) {
       loadMembers();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSuperAdmin]);
 
   // ========================================
-  // Member display name
+  // Spouse display name
   // ========================================
-
-  function getMemberName(
-    member: MemberOption
-  ) {
-    return [
-      normalizeRequiredText(
-        member.first_name
-      ),
-      normalizeOptionalText(
-        member.middle_name
-      ),
-      normalizeRequiredText(
-        member.last_name
-      ),
-      normalizeOptionalText(
-        member.suffix
-      ),
-    ]
-      .filter(Boolean)
-      .join(' ');
-  }
 
   function getSelectedSpouseName() {
     if (!spouseId) {
       return '';
     }
 
-    const spouse = members.find(
-      (member) =>
-        member.id === spouseId
-    );
+    const spouse = members.find((member) => member.id === spouseId);
 
-    return spouse
-      ? getMemberName(spouse)
-      : '';
-  }
-
-  // ========================================
-  // Date helpers
-  // ========================================
-
-  function parseDateOnly(
-    value: string
-  ): Date | null {
-    const match =
-      /^(\d{4})-(\d{2})-(\d{2})$/.exec(
-        value
-      );
-
-    if (!match) {
-      return null;
-    }
-
-    const year = Number(match[1]);
-    const month = Number(match[2]);
-    const day = Number(match[3]);
-
-    const date = new Date(
-      Date.UTC(
-        year,
-        month - 1,
-        day
-      )
-    );
-
-    if (
-      date.getUTCFullYear() !== year ||
-      date.getUTCMonth() !== month - 1 ||
-      date.getUTCDate() !== day
-    ) {
-      return null;
-    }
-
-    return date;
+    return spouse ? formatMemberName(spouse) : '';
   }
 
   // ========================================
@@ -432,306 +231,168 @@ export default function AddMemberScreen() {
 
   async function handleAddMember() {
     if (!isActive || !isSuperAdmin) {
-      showModal(
-        'Access Denied',
-        'Only an active Super Admin can add members.'
-      );
-
+      finish('Access Denied', 'Only an active Super Admin can add members.');
       return;
     }
 
-  const trimmedFirstName =
-    normalizeRequiredText(
-      firstName
-    );
-
-  const trimmedMiddleName =
-    normalizeOptionalText(
-      middleName
-    );
-
-  const trimmedLastName =
-    normalizeRequiredText(
-      lastName
-    );
-
-  const trimmedSuffix =
-    normalizeOptionalText(
-      suffix
-    );
-
-  const trimmedMemberNo =
-    normalizeOptionalText(
-      memberNo
-    );
-
-  const trimmedBirthDate =
-    normalizeOptionalText(
-      birthDate
-    );
-
-  const trimmedWeddingDate =
-    normalizeOptionalText(
-      weddingDate
-    );
-
-  const trimmedContactNo =
-    normalizeOptionalText(
-      contactNo
-    );
-
-  const trimmedAddress =
-    normalizeOptionalText(
-      address
-    );
-
-  const trimmedMinistry =
-    normalizeOptionalText(
-      ministry
-    );
-
-  // ========================================
-  // Validation
-  // ========================================
-
-  if (!trimmedFirstName) {
-    showModal(
-      'Missing Information',
-      'Please enter the first name.'
-    );
-
-    return;
-  }
-
-  if (!trimmedLastName) {
-    showModal(
-      'Missing Information',
-      'Please enter the last name.'
-    );
-
-    return;
-  }
-
-  if (
-    trimmedFirstName.length > 150 ||
-    trimmedMiddleName.length > 150 ||
-    trimmedLastName.length > 150 ||
-    trimmedSuffix.length > 50
-  ) {
-    showModal(
-      'Invalid Name',
-      'Name fields contain too many characters. Please review the name and try again.'
-    );
-
-    return;
-  }
-
-  if (!trimmedBirthDate) {
-    showModal(
-      'Missing Information',
-      'Please enter the birth date.'
-    );
-
-    return;
-  }
-
-  // ========================================
-  // Date validation
-  // ========================================
-
-  const birthDateValue =
-    parseDateOnly(
-      trimmedBirthDate
-    );
-
-  if (!birthDateValue) {
-    showModal(
-      'Invalid Birth Date',
-      'Please enter a valid birth date using YYYY-MM-DD.'
-    );
-
-    return;
-  }
-
-  const now = new Date();
-
-  const todayDateOnly =
-    new Date(
-      Date.UTC(
-        now.getFullYear(),
-        now.getMonth(),
-        now.getDate()
-      )
-    );
-
-  if (
-    birthDateValue >
-    todayDateOnly
-  ) {
-    showModal(
-      'Invalid Birth Date',
-      'Birth date cannot be in the future.'
-    );
-
-    return;
-  }
-
-  const weddingDateValue =
-    trimmedWeddingDate
-      ? parseDateOnly(
-          trimmedWeddingDate
-        )
-      : null;
-
-  if (
-    trimmedWeddingDate &&
-    !weddingDateValue
-  ) {
-    showModal(
-      'Invalid Wedding Anniversary',
-      'Please enter a valid wedding anniversary using YYYY-MM-DD.'
-    );
-
-    return;
-  }
-
-  if (
-    weddingDateValue &&
-    weddingDateValue >
-      todayDateOnly
-  ) {
-    showModal(
-      'Invalid Wedding Anniversary',
-      'Wedding anniversary cannot be in the future.'
-    );
-
-    return;
-  }
-
-  if (
-    weddingDateValue &&
-    weddingDateValue <
-      birthDateValue
-  ) {
-    showModal(
-      'Invalid Wedding Anniversary',
-      'Wedding anniversary cannot be earlier than the member birth date.'
-    );
-
-    return;
-  }
-
-  // ========================================
-  // Member number validation
-  // ========================================
-
-  if (
-    trimmedMemberNo &&
-    trimmedMemberNo.length >
-      50
-  ) {
-    showModal(
-      'Invalid Member Number',
-      'Member number must be 50 characters or fewer.'
-    );
-
-    return;
-  }
-
-  // ========================================
-  // Prevent duplicate submission
-  // ========================================
-
-  if (loading) {
-    return;
-  }
-
-  try {
-    setLoading(true);
+    const trimmedFirstName = normalizeRequiredText(firstName);
+    const trimmedMiddleName = normalizeOptionalText(middleName);
+    const trimmedLastName = normalizeRequiredText(lastName);
+    const trimmedSuffix = normalizeOptionalText(suffix);
+    const trimmedMemberNo = normalizeOptionalText(memberNo);
+    const trimmedBirthDate = normalizeOptionalText(birthDate);
+    const trimmedWeddingDate = normalizeOptionalText(weddingDate);
+    const trimmedContactNo = normalizeOptionalText(contactNo);
+    const trimmedAddress = normalizeOptionalText(address);
+    const trimmedMinistry = normalizeOptionalText(ministry);
 
     // ========================================
-    // Check duplicate member number
+    // Validation
     // ========================================
 
-    if (trimmedMemberNo) {
-      const {
-        data: existingMember,
-        error: duplicateCheckError,
-      } =
-        await supabase
-          .from('members')
-          .select('id')
-          .eq(
-            'member_no',
-            trimmedMemberNo
-          )
-          .limit(1)
-          .maybeSingle();
+    if (!trimmedFirstName) {
+      finish('Missing Information', 'Please enter the first name.');
+      return;
+    }
 
-      if (duplicateCheckError) {
-        console.error(
-          '[MEMBER] Duplicate member number check failed:',
-          duplicateCheckError
-        );
+    if (!trimmedLastName) {
+      finish('Missing Information', 'Please enter the last name.');
+      return;
+    }
 
-        showModal(
-          'Unable to Validate Member Number',
-          'We could not verify whether this member number is already in use. The member was not saved. Please try again.'
-        );
+    if (
+      trimmedFirstName.length > 150 ||
+      trimmedMiddleName.length > 150 ||
+      trimmedLastName.length > 150 ||
+      trimmedSuffix.length > 50
+    ) {
+      finish(
+        'Invalid Name',
+        'Name fields contain too many characters. Please review the name and try again.'
+      );
+      return;
+    }
 
-        return;
-      }
-
-      if (existingMember) {
-        showModal(
-          'Duplicate Member Number',
-          `Member number ${trimmedMemberNo} is already assigned to another member. Please use a different member number.`
-        );
-
-        return;
-      }
+    if (!trimmedBirthDate) {
+      finish('Missing Information', 'Please enter the birth date.');
+      return;
     }
 
     // ========================================
-    // Prepare sensitive data
+    // Date validation
     // ========================================
 
-    const sensitiveData = {
-      first_name:
-        trimmedFirstName,
+    const birthDateValue = parseDateOnly(trimmedBirthDate);
 
-      middle_name:
-        trimmedMiddleName || null,
+    if (!birthDateValue) {
+      finish('Invalid Birth Date', 'Please enter a valid birth date using YYYY-MM-DD.');
+      return;
+    }
 
-      last_name:
-        trimmedLastName,
+    const todayDateOnly = todayUTC();
 
-      suffix:
-        trimmedSuffix || null,
+    if (birthDateValue > todayDateOnly) {
+      finish('Invalid Birth Date', 'Birth date cannot be in the future.');
+      return;
+    }
 
-      birth_date:
-        trimmedBirthDate || null,
+    const weddingDateValue = trimmedWeddingDate ? parseDateOnly(trimmedWeddingDate) : null;
 
-      address:
-        trimmedAddress || null,
+    if (trimmedWeddingDate && !weddingDateValue) {
+      finish(
+        'Invalid Wedding Anniversary',
+        'Please enter a valid wedding anniversary using YYYY-MM-DD.'
+      );
+      return;
+    }
 
-      contact_no:
-        trimmedContactNo || null,
-    };
+    if (weddingDateValue && weddingDateValue > todayDateOnly) {
+      finish('Invalid Wedding Anniversary', 'Wedding anniversary cannot be in the future.');
+      return;
+    }
 
-    console.log(
-      '[MEMBER] Encrypting sensitive information...'
-    );
+    if (weddingDateValue && weddingDateValue < birthDateValue) {
+      finish(
+        'Invalid Wedding Anniversary',
+        'Wedding anniversary cannot be earlier than the member birth date.'
+      );
+      return;
+    }
 
     // ========================================
-    // Encrypt sensitive information
+    // Member number validation
     // ========================================
 
-    const {
-      data: cryptoResponse,
-      error: cryptoError,
-    } =
-      await supabase.functions.invoke(
+    if (trimmedMemberNo && trimmedMemberNo.length > 50) {
+      finish('Invalid Member Number', 'Member number must be 50 characters or fewer.');
+      return;
+    }
+
+    // ========================================
+    // Prevent duplicate submission
+    // ========================================
+
+    if (loading) {
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      // ========================================
+      // Check duplicate member number
+      // ========================================
+
+      if (trimmedMemberNo) {
+        const { data: existingMember, error: duplicateCheckError } = await supabase
+          .from('members')
+          .select('id')
+          .eq('member_no', trimmedMemberNo)
+          .limit(1)
+          .maybeSingle();
+
+        if (duplicateCheckError) {
+          console.error('[MEMBER] Duplicate member number check failed:', duplicateCheckError);
+
+          finish(
+            'Unable to Validate Member Number',
+            'We could not verify whether this member number is already in use. The member was not saved. Please try again.'
+          );
+
+          return;
+        }
+
+        if (existingMember) {
+          finish(
+            'Duplicate Member Number',
+            `Member number ${trimmedMemberNo} is already assigned to another member. Please use a different member number.`
+          );
+
+          return;
+        }
+      }
+
+      // ========================================
+      // Prepare sensitive data
+      // ========================================
+
+      const sensitiveData = {
+        first_name: trimmedFirstName,
+        middle_name: trimmedMiddleName || null,
+        last_name: trimmedLastName,
+        suffix: trimmedSuffix || null,
+        birth_date: trimmedBirthDate || null,
+        address: trimmedAddress || null,
+        contact_no: trimmedContactNo || null,
+      };
+
+      console.log('[MEMBER] Encrypting sensitive information...');
+
+      // ========================================
+      // Encrypt sensitive information
+      // ========================================
+
+      const { data: cryptoResponse, error: cryptoError } = await supabase.functions.invoke(
         'member-crypto',
         {
           body: {
@@ -741,232 +402,173 @@ export default function AddMemberScreen() {
         }
       );
 
-    if (cryptoError) {
-      console.error(
-        '[MEMBER] Encryption function error:',
-        cryptoError
-      );
+      if (cryptoError) {
+        console.error('[MEMBER] Encryption function error:', cryptoError);
 
-      showModal(
-        'Unable to Secure Member Information',
-        'We could not securely process the member information. The member was not saved. Please try again.'
-      );
+        finish(
+          'Unable to Secure Member Information',
+          'We could not securely process the member information. The member was not saved. Please try again.'
+        );
 
-      return;
-    }
+        return;
+      }
 
-    if (
-      !cryptoResponse?.success ||
-      !cryptoResponse?.data
-    ) {
-      console.error(
-        '[MEMBER] Invalid encryption response:',
-        cryptoResponse
-      );
+      if (!cryptoResponse?.success || !cryptoResponse?.data) {
+        console.error('[MEMBER] Invalid encryption response:', cryptoResponse);
 
-      showModal(
-        'Encryption Failed',
-        'The member information could not be secured. The member was not saved.'
-      );
+        finish(
+          'Encryption Failed',
+          'The member information could not be secured. The member was not saved.'
+        );
 
-      return;
-    }
+        return;
+      }
 
-    const encrypted =
-      cryptoResponse.data;
+      const encrypted = cryptoResponse.data;
 
-    console.log(
-      '[MEMBER] Sensitive information encrypted successfully.'
-    );
+      console.log('[MEMBER] Sensitive information encrypted successfully.');
 
-    // ========================================
-    // Insert member
-    // ========================================
+      // ========================================
+      // Insert member
+      // ========================================
 
-    const {
-      data: insertedMember,
-      error: insertError,
-    } =
-      await supabase
+      const { data: insertedMember, error: insertError } = await supabase
         .from('members')
         .insert({
           // ----------------------------------
           // Non-sensitive fields
           // ----------------------------------
-
-          member_no:
-            trimmedMemberNo || null,
-
+          member_no: trimmedMemberNo || null,
           gender,
-
-          wedding_date:
-            trimmedWeddingDate || null,
-
-          spouse_id:
-            spouseId || null,
-
+          wedding_date: trimmedWeddingDate || null,
+          spouse_id: spouseId || null,
           baptized,
-
-          status:
-            'Active',
-
-          member_group:
-            memberGroup,
-
-          ministry:
-            trimmedMinistry || null,
+          status: 'Active',
+          member_group: memberGroup,
+          ministry: trimmedMinistry || null,
 
           // ----------------------------------
           // Encrypted fields
           // ----------------------------------
-
-          first_name:
-            encrypted.first_name,
-
-          middle_name:
-            encrypted.middle_name,
-
-          last_name:
-            encrypted.last_name,
-
-          suffix:
-            encrypted.suffix,
-
-          birth_date:
-            encrypted.birth_date,
-
-          address:
-            encrypted.address,
-
-          contact_no:
-            encrypted.contact_no,
+          first_name: encrypted.first_name,
+          middle_name: encrypted.middle_name,
+          last_name: encrypted.last_name,
+          suffix: encrypted.suffix,
+          birth_date: encrypted.birth_date,
+          address: encrypted.address,
+          contact_no: encrypted.contact_no,
         })
         .select('id')
         .single();
 
-    // ========================================
-    // Database error
-    // ========================================
+      // ========================================
+      // Database error
+      // ========================================
 
-    if (insertError) {
-      console.error(
-        '[MEMBER] Failed to add member:',
-        insertError
-      );
+      if (insertError) {
+        console.error('[MEMBER] Failed to add member:', insertError);
 
-      if (
-        insertError.code ===
-        '23505'
-      ) {
-        showModal(
-          'Duplicate Member',
-          'This member conflicts with an existing record. If you entered a member number, it may already be in use.'
-        );
-      } else if (
-        insertError.code ===
-        '42501'
-      ) {
-        showModal(
-          'Access Denied',
-          'Your administrator account is not permitted to add members.'
-        );
-      } else {
-        showModal(
-          'Unable to Add Member',
-          'We could not save the member. Please review the information and try again.'
-        );
+        if (insertError.code === '23505') {
+          finish(
+            'Duplicate Member',
+            'This member conflicts with an existing record. If you entered a member number, it may already be in use.'
+          );
+        } else if (insertError.code === '42501') {
+          finish('Access Denied', 'Your administrator account is not permitted to add members.');
+        } else {
+          finish(
+            'Unable to Add Member',
+            'We could not save the member. Please review the information and try again.'
+          );
+        }
+
+        return;
       }
 
-      return;
-    }
+      const insertedMemberId = insertedMember?.id ?? null;
 
-    const insertedMemberId =
-      insertedMember?.id ?? null;
+      if (!insertedMemberId) {
+        console.error('[MEMBER] Insert succeeded but no member ID was returned.');
 
-    if (!insertedMemberId) {
-      console.error(
-        '[MEMBER] Insert succeeded but no member ID was returned.'
-      );
-
-      showModal(
-        'Member Added',
-        `${trimmedFirstName} ${trimmedLastName} was added, but the new member ID could not be confirmed. You can verify the record from Member Records.`,
-        true
-      );
-
-      return;
-    }
-
-    // ========================================
-    // Set spouse relationship
-    // ========================================
-    //
-    // The new member now exists, so establish the
-    // reverse spouse_id on the selected spouse.
-    // If that spouse was already linked to another
-    // member, clear the stale relationship first.
-
-    if (spouseId) {
-      const {
-        data: selectedSpouse,
-        error: selectedSpouseError,
-      } = await supabase
-        .from('members')
-        .select('spouse_id')
-        .eq('id', spouseId)
-        .single();
-
-      if (selectedSpouseError) {
-        console.error(
-          '[MEMBER] Selected spouse lookup failed:',
-          selectedSpouseError
-        );
-
-        /*
-         * The member was already inserted successfully.
-         * Do not pretend the spouse relationship succeeded.
-         */
-        showModal(
+        finish(
           'Member Added',
-          `${trimmedFirstName} ${trimmedLastName} was added, but the spouse relationship could not be completed. You can set the spouse from Edit Member.`,
+          `${trimmedFirstName} ${trimmedLastName} was added, but the new member ID could not be confirmed. You can verify the record from Member Records.`,
           true
         );
 
         return;
       }
 
-      const previousSpouseId =
-        selectedSpouse?.spouse_id ?? null;
+      // ========================================
+      // Set spouse relationship
+      // ========================================
+      //
+      // The new member now exists, so establish the reverse
+      // spouse_id on the selected spouse. If that spouse was
+      // already linked to another member, clear the stale
+      // relationship first.
 
-      if (
-        previousSpouseId
-      ) {
-        const {
-          error:
-            detachPreviousSpouseError,
-        } = await supabase
+      if (spouseId) {
+        const { data: selectedSpouse, error: selectedSpouseError } = await supabase
+          .from('members')
+          .select('spouse_id')
+          .eq('id', spouseId)
+          .single();
+
+        if (selectedSpouseError) {
+          console.error('[MEMBER] Selected spouse lookup failed:', selectedSpouseError);
+
+          /*
+           * The member was already inserted successfully. Do not
+           * pretend the spouse relationship succeeded.
+           */
+          finish(
+            'Member Added',
+            `${trimmedFirstName} ${trimmedLastName} was added, but the spouse relationship could not be completed. You can set the spouse from Edit Member.`,
+            true
+          );
+
+          return;
+        }
+
+        const previousSpouseId = selectedSpouse?.spouse_id ?? null;
+
+        if (previousSpouseId) {
+          const { error: detachPreviousSpouseError } = await supabase
+            .from('members')
+            .update({
+              spouse_id: null,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', previousSpouseId);
+
+          if (detachPreviousSpouseError) {
+            console.error('[MEMBER] Failed to detach previous spouse:', detachPreviousSpouseError);
+
+            finish(
+              'Member Added',
+              `${trimmedFirstName} ${trimmedLastName} was added, but the existing spouse relationship could not be safely replaced.`,
+              true
+            );
+
+            return;
+          }
+        }
+
+        const { error: spouseUpdateError } = await supabase
           .from('members')
           .update({
-            spouse_id: null,
-            updated_at:
-              new Date().toISOString(),
+            spouse_id: insertedMemberId,
+            updated_at: new Date().toISOString(),
           })
-          .eq(
-            'id',
-            previousSpouseId
-          );
+          .eq('id', spouseId);
 
-        if (
-          detachPreviousSpouseError
-        ) {
-          console.error(
-            '[MEMBER] Failed to detach previous spouse:',
-            detachPreviousSpouseError
-          );
+        if (spouseUpdateError) {
+          console.error('[MEMBER] Failed to create reverse spouse relationship:', spouseUpdateError);
 
-          showModal(
+          finish(
             'Member Added',
-            `${trimmedFirstName} ${trimmedLastName} was added, but the existing spouse relationship could not be safely replaced.`,
+            `${trimmedFirstName} ${trimmedLastName} was added, but the spouse relationship could not be completed. You can set the spouse from Edit Member.`,
             true
           );
 
@@ -974,63 +576,19 @@ export default function AddMemberScreen() {
         }
       }
 
-      const {
-        error:
-          spouseUpdateError,
-      } = await supabase
-        .from('members')
-        .update({
-          spouse_id:
-            insertedMemberId,
-          updated_at:
-            new Date().toISOString(),
-        })
-        .eq(
-          'id',
-          spouseId
-        );
+      // ========================================
+      // Success
+      // ========================================
 
-      if (
-        spouseUpdateError
-      ) {
-        console.error(
-          '[MEMBER] Failed to create reverse spouse relationship:',
-          spouseUpdateError
-        );
+      finish('Member Added', `${trimmedFirstName} ${trimmedLastName} has been successfully added.`, true);
+    } catch (error) {
+      console.error('[MEMBER] Unexpected add member error:', error);
 
-        showModal(
-          'Member Added',
-          `${trimmedFirstName} ${trimmedLastName} was added, but the spouse relationship could not be completed. You can set the spouse from Edit Member.`,
-          true
-        );
-
-        return;
-      }
+      finish('Unable to Add Member', 'Something went wrong while securely adding the member. Please try again.');
+    } finally {
+      setLoading(false);
     }
-
-    // ========================================
-    // Success
-    // ========================================
-
-    showModal(
-      'Member Added',
-      `${trimmedFirstName} ${trimmedLastName} has been successfully added.`,
-      true
-    );
-  } catch (error) {
-    console.error(
-      '[MEMBER] Unexpected add member error:',
-      error
-    );
-
-    showModal(
-      'Unable to Add Member',
-      'Something went wrong while securely adding the member. Please try again.'
-    );
-  } finally {
-    setLoading(false);
   }
-}
 
   // ========================================
   // Access control
@@ -1039,13 +597,8 @@ export default function AddMemberScreen() {
   if (!isActive || !isSuperAdmin) {
     return (
       <View style={styles.center}>
-        <Text style={styles.deniedTitle}>
-          Access Denied
-        </Text>
-
-        <Text style={styles.deniedText}>
-          Only an active Super Admin can add members.
-        </Text>
+        <Text style={styles.deniedTitle}>Access Denied</Text>
+        <Text style={styles.deniedText}>Only an active Super Admin can add members.</Text>
       </View>
     );
   }
@@ -1056,173 +609,117 @@ export default function AddMemberScreen() {
 
   return (
     <View style={styles.screen}>
-      <ScrollView
-        style={styles.container}
-        contentContainerStyle={
-          styles.content
-        }
-        keyboardShouldPersistTaps="handled"
-      >
+      <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         {/* Header */}
 
         <View style={styles.header}>
-          <Text style={styles.title}>
-            Add Member
-          </Text>
-
-          <Text style={styles.subtitle}>
-            Add a new member to the church
-            directory.
-          </Text>
+          <Text style={styles.title}>Add Member</Text>
+          <Text style={styles.subtitle}>Add a new member to the church directory.</Text>
         </View>
 
         {/* Form */}
 
         <View style={styles.form}>
-
           {/* Member Number */}
 
-          <Text style={styles.label}>
-            Member No.
-          </Text>
+          <Text style={styles.label}>Member No.</Text>
 
           <TextInput
             style={styles.input}
             value={memberNo}
             onChangeText={setMemberNo}
             placeholder="Optional"
-            placeholderTextColor="#9ca3af"
+            placeholderTextColor={colors.textMuted}
           />
 
           {/* First Name */}
 
-          <Text style={styles.label}>
-            First Name *
-          </Text>
+          <Text style={styles.label}>First Name *</Text>
 
           <TextInput
             style={styles.input}
             value={firstName}
             onChangeText={setFirstName}
             placeholder="Enter first name"
-            placeholderTextColor="#9ca3af"
+            placeholderTextColor={colors.textMuted}
             autoCapitalize="words"
           />
 
           {/* Middle Name */}
 
-          <Text style={styles.label}>
-            Middle Name
-          </Text>
+          <Text style={styles.label}>Middle Name</Text>
 
           <TextInput
             style={styles.input}
             value={middleName}
             onChangeText={setMiddleName}
             placeholder="Optional"
-            placeholderTextColor="#9ca3af"
+            placeholderTextColor={colors.textMuted}
             autoCapitalize="words"
           />
 
           {/* Last Name */}
 
-          <Text style={styles.label}>
-            Last Name *
-          </Text>
+          <Text style={styles.label}>Last Name *</Text>
 
           <TextInput
             style={styles.input}
             value={lastName}
             onChangeText={setLastName}
             placeholder="Enter last name"
-            placeholderTextColor="#9ca3af"
+            placeholderTextColor={colors.textMuted}
             autoCapitalize="words"
           />
 
           {/* Suffix */}
 
-          <Text style={styles.label}>
-            Suffix
-          </Text>
+          <Text style={styles.label}>Suffix</Text>
 
           <TextInput
             style={styles.input}
             value={suffix}
             onChangeText={setSuffix}
             placeholder="Jr., Sr., III, etc."
-            placeholderTextColor="#9ca3af"
+            placeholderTextColor={colors.textMuted}
             autoCapitalize="characters"
           />
 
           {/* Birth Date */}
 
-          <Text style={styles.label}>
-            Birth Date *
-          </Text>
+          <Text style={styles.label}>Birth Date *</Text>
 
           <TextInput
             style={styles.input}
             value={birthDate}
             onChangeText={setBirthDate}
             placeholder="YYYY-MM-DD"
-            placeholderTextColor="#9ca3af"
+            placeholderTextColor={colors.textMuted}
             keyboardType="numbers-and-punctuation"
           />
 
-          <Text style={styles.helperText}>
-            Example: 1990-08-25
-          </Text>
+          <Text style={styles.helperText}>Example: 1990-08-25</Text>
 
           {/* Gender */}
 
-          <Text style={styles.label}>
-            Gender
-          </Text>
+          <Text style={styles.label}>Gender</Text>
 
           <View style={styles.optionContainer}>
-            {(
-              ['Male', 'Female'] as Gender[]
-            ).map((item) => {
-              const selected =
-                gender === item;
+            {(['Male', 'Female'] as Gender[]).map((item) => {
+              const selected = gender === item;
 
               return (
                 <Pressable
                   key={item}
-                  style={[
-                    styles.option,
-                    selected &&
-                      styles.optionSelected,
-                  ]}
-                  onPress={() =>
-                    setGender(item)
-                  }
+                  style={[styles.option, selected && styles.optionSelected]}
+                  onPress={() => setGender(item)}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected }}
                 >
-                  <View
-                    style={[
-                      styles.radio,
-                      selected &&
-                        styles.radioSelected,
-                    ]}
-                  >
-                    {selected && (
-                      <View
-                        style={
-                          styles.radioInner
-                        }
-                      />
-                    )}
+                  <View style={[styles.radio, selected && styles.radioSelected]}>
+                    {selected && <View style={styles.radioInner} />}
                   </View>
 
-                  <Text
-                    style={[
-                      styles.optionText,
-                      selected &&
-                        styles.optionTextSelected,
-                    ]}
-                  >
-                    {item}
-                  </Text>
+                  <Text style={[styles.optionText, selected && styles.optionTextSelected]}>{item}</Text>
                 </Pressable>
               );
             })}
@@ -1230,136 +727,63 @@ export default function AddMemberScreen() {
 
           {/* Spouse */}
 
-          <Text style={styles.label}>
-            Spouse
-          </Text>
+          <Text style={styles.label}>Spouse</Text>
 
           <Pressable
             style={styles.selectInput}
             onPress={() => {
-              setShowSpouseList(
-                !showSpouseList
-              );
-
-              setShowMemberGroupList(
-                false
-              );
-
-              setShowMinistryList(
-                false
-              );
+              setShowSpouseList(!showSpouseList);
+              setShowMemberGroupList(false);
+              setShowMinistryList(false);
             }}
+            accessibilityRole="button"
+            accessibilityLabel="Select spouse"
+            accessibilityState={{ expanded: showSpouseList }}
           >
-            <Text
-              style={[
-                styles.selectText,
-                !spouseId &&
-                  styles.placeholderText,
-              ]}
-            >
-              {spouseId
-                ? getSelectedSpouseName()
-                : 'Select spouse (optional)'}
+            <Text style={[styles.selectText, !spouseId && styles.placeholderText]}>
+              {spouseId ? getSelectedSpouseName() : 'Select spouse (optional)'}
             </Text>
 
-            <Text
-              style={styles.selectArrow}
-            >
-              {showSpouseList
-                ? '▲'
-                : '▼'}
-            </Text>
+            <Text style={styles.selectArrow}>{showSpouseList ? '▲' : '▼'}</Text>
           </Pressable>
 
           {showSpouseList && (
-            <View
-              style={
-                styles.spouseDropdown
-              }
-            >
+            <View style={styles.spouseDropdown}>
               {/* No spouse */}
 
               <Pressable
-                style={
-                  styles.spouseOption
-                }
+                style={styles.spouseOption}
                 onPress={() => {
                   setSpouseId(null);
-
-                  setShowSpouseList(
-                    false
-                  );
+                  setShowSpouseList(false);
                 }}
+                accessibilityRole="button"
               >
-                <Text
-                  style={
-                    styles.spouseOptionText
-                  }
-                >
-                  No spouse
-                </Text>
+                <Text style={styles.spouseOptionText}>No spouse</Text>
               </Pressable>
 
               {loadingMembers ? (
-                <View
-                  style={
-                    styles.loadingSpouse
-                  }
-                >
+                <View style={styles.loadingSpouse}>
                   <ActivityIndicator />
-
-                  <Text
-                    style={
-                      styles.loadingSpouseText
-                    }
-                  >
-                    Loading members...
-                  </Text>
+                  <Text style={styles.loadingSpouseText}>Loading members...</Text>
                 </View>
-              ) : members.length ===
-                0 ? (
-                <View
-                  style={
-                    styles.loadingSpouse
-                  }
-                >
-                  <Text
-                    style={
-                      styles.loadingSpouseText
-                    }
-                  >
-                    No other members found.
-                  </Text>
+              ) : members.length === 0 ? (
+                <View style={styles.loadingSpouse}>
+                  <Text style={styles.loadingSpouseText}>No other members found.</Text>
                 </View>
               ) : (
                 members.map((member) => (
                   <Pressable
                     key={member.id}
-                    style={[
-                      styles.spouseOption,
-                      spouseId ===
-                        member.id &&
-                        styles.spouseOptionSelected,
-                    ]}
+                    style={[styles.spouseOption, spouseId === member.id && styles.spouseOptionSelected]}
                     onPress={() => {
-                      setSpouseId(
-                        member.id
-                      );
-
-                      setShowSpouseList(
-                        false
-                      );
+                      setSpouseId(member.id);
+                      setShowSpouseList(false);
                     }}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: spouseId === member.id }}
                   >
-                    <Text
-                      style={
-                        styles.spouseOptionText
-                      }
-                    >
-                      {getMemberName(
-                        member
-                      )}
-                    </Text>
+                    <Text style={styles.spouseOptionText}>{formatMemberName(member)}</Text>
                   </Pressable>
                 ))
               )}
@@ -1368,55 +792,42 @@ export default function AddMemberScreen() {
 
           {/* Wedding Anniversary */}
 
-          <Text style={styles.label}>
-            Wedding Anniversary
-          </Text>
+          <Text style={styles.label}>Wedding Anniversary</Text>
 
           <TextInput
             style={styles.input}
             value={weddingDate}
-            onChangeText={
-              setWeddingDate
-            }
+            onChangeText={setWeddingDate}
             placeholder="YYYY-MM-DD"
-            placeholderTextColor="#9ca3af"
+            placeholderTextColor={colors.textMuted}
             keyboardType="numbers-and-punctuation"
           />
 
-          <Text style={styles.helperText}>
-            Leave blank if not applicable.
-          </Text>
+          <Text style={styles.helperText}>Leave blank if not applicable.</Text>
 
           {/* Contact */}
 
-          <Text style={styles.label}>
-            Contact No.
-          </Text>
+          <Text style={styles.label}>Contact No.</Text>
 
           <TextInput
             style={styles.input}
             value={contactNo}
             onChangeText={setContactNo}
             placeholder="Enter contact number"
-            placeholderTextColor="#9ca3af"
+            placeholderTextColor={colors.textMuted}
             keyboardType="phone-pad"
           />
 
           {/* Address */}
 
-          <Text style={styles.label}>
-            Address
-          </Text>
+          <Text style={styles.label}>Address</Text>
 
           <TextInput
-            style={[
-              styles.input,
-              styles.textArea,
-            ]}
+            style={[styles.input, styles.textArea]}
             value={address}
             onChangeText={setAddress}
             placeholder="Enter address"
-            placeholderTextColor="#9ca3af"
+            placeholderTextColor={colors.textMuted}
             multiline
             numberOfLines={4}
             textAlignVertical="top"
@@ -1424,299 +835,147 @@ export default function AddMemberScreen() {
 
           {/* Baptized */}
 
-          <Text style={styles.label}>
-            Baptized
-          </Text>
+          <Text style={styles.label}>Baptized</Text>
 
           <View style={styles.optionContainer}>
             <Pressable
-              style={[
-                styles.option,
-                baptized &&
-                  styles.optionSelected,
-              ]}
-              onPress={() =>
-                setBaptized(true)
-              }
+              style={[styles.option, baptized && styles.optionSelected]}
+              onPress={() => setBaptized(true)}
+              accessibilityRole="radio"
+              accessibilityState={{ selected: baptized }}
             >
-              <View
-                style={[
-                  styles.radio,
-                  baptized &&
-                    styles.radioSelected,
-                ]}
-              >
-                {baptized && (
-                  <View
-                    style={
-                      styles.radioInner
-                    }
-                  />
-                )}
+              <View style={[styles.radio, baptized && styles.radioSelected]}>
+                {baptized && <View style={styles.radioInner} />}
               </View>
 
-              <Text
-                style={[
-                  styles.optionText,
-                  baptized &&
-                    styles.optionTextSelected,
-                ]}
-              >
-                Yes
-              </Text>
+              <Text style={[styles.optionText, baptized && styles.optionTextSelected]}>Yes</Text>
             </Pressable>
 
             <Pressable
-              style={[
-                styles.option,
-                !baptized &&
-                  styles.optionSelected,
-              ]}
-              onPress={() =>
-                setBaptized(false)
-              }
+              style={[styles.option, !baptized && styles.optionSelected]}
+              onPress={() => setBaptized(false)}
+              accessibilityRole="radio"
+              accessibilityState={{ selected: !baptized }}
             >
-              <View
-                style={[
-                  styles.radio,
-                  !baptized &&
-                    styles.radioSelected,
-                ]}
-              >
-                {!baptized && (
-                  <View
-                    style={
-                      styles.radioInner
-                    }
-                  />
-                )}
+              <View style={[styles.radio, !baptized && styles.radioSelected]}>
+                {!baptized && <View style={styles.radioInner} />}
               </View>
 
-              <Text
-                style={[
-                  styles.optionText,
-                  !baptized &&
-                    styles.optionTextSelected,
-                ]}
-              >
-                No
-              </Text>
+              <Text style={[styles.optionText, !baptized && styles.optionTextSelected]}>No</Text>
             </Pressable>
           </View>
 
           {/* Member Group */}
 
-          <Text style={styles.label}>
-            Member Group *
-          </Text>
+          <Text style={styles.label}>Member Group *</Text>
 
           <Pressable
             style={styles.selectInput}
             onPress={() => {
-              setShowMemberGroupList(
-                !showMemberGroupList
-              );
-
-              setShowMinistryList(
-                false
-              );
-
-              setShowSpouseList(
-                false
-              );
+              setShowMemberGroupList(!showMemberGroupList);
+              setShowMinistryList(false);
+              setShowSpouseList(false);
             }}
+            accessibilityRole="button"
+            accessibilityLabel="Select member group"
+            accessibilityState={{ expanded: showMemberGroupList }}
           >
-            <Text style={styles.selectText}>
-              {memberGroup}
-            </Text>
-
-            <Text
-              style={styles.selectArrow}
-            >
-              {showMemberGroupList
-                ? '▲'
-                : '▼'}
-            </Text>
+            <Text style={styles.selectText}>{memberGroup}</Text>
+            <Text style={styles.selectArrow}>{showMemberGroupList ? '▲' : '▼'}</Text>
           </Pressable>
 
           {showMemberGroupList && (
-            <View
-              style={styles.dropdown}
-            >
-              {memberGroups.map(
-                (item) => {
-                  const selected =
-                    memberGroup ===
-                    item;
+            <View style={styles.dropdown}>
+              {memberGroups.map((item) => {
+                const selected = memberGroup === item;
 
-                  return (
-                    <Pressable
-                      key={item}
-                      style={[
-                        styles.dropdownOption,
-                        selected &&
-                          styles.dropdownOptionSelected,
-                      ]}
-                      onPress={() => {
-                        setMemberGroup(
-                          item
-                        );
-
-                        setShowMemberGroupList(
-                          false
-                        );
-                      }}
-                    >
-                      <Text
-                        style={[
-                          styles.dropdownOptionText,
-                          selected &&
-                            styles.dropdownOptionTextSelected,
-                        ]}
-                      >
-                        {item}
-                      </Text>
-                    </Pressable>
-                  );
-                }
-              )}
+                return (
+                  <Pressable
+                    key={item}
+                    style={[styles.dropdownOption, selected && styles.dropdownOptionSelected]}
+                    onPress={() => {
+                      setMemberGroup(item);
+                      setShowMemberGroupList(false);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                  >
+                    <Text style={[styles.dropdownOptionText, selected && styles.dropdownOptionTextSelected]}>
+                      {item}
+                    </Text>
+                  </Pressable>
+                );
+              })}
             </View>
           )}
 
           {/* Ministry */}
 
-          <Text style={styles.label}>
-            Ministry
-          </Text>
+          <Text style={styles.label}>Ministry</Text>
 
           <Pressable
             style={styles.selectInput}
             onPress={() => {
-              setShowMinistryList(
-                !showMinistryList
-              );
-
-              setShowMemberGroupList(
-                false
-              );
-
-              setShowSpouseList(
-                false
-              );
+              setShowMinistryList(!showMinistryList);
+              setShowMemberGroupList(false);
+              setShowSpouseList(false);
             }}
+            accessibilityRole="button"
+            accessibilityLabel="Select ministry"
+            accessibilityState={{ expanded: showMinistryList }}
           >
-            <Text
-              style={[
-                styles.selectText,
-                !ministry &&
-                  styles.placeholderText,
-              ]}
-            >
-              {ministry ||
-                'Select ministry (optional)'}
+            <Text style={[styles.selectText, !ministry && styles.placeholderText]}>
+              {ministry || 'Select ministry (optional)'}
             </Text>
-
-            <Text
-              style={styles.selectArrow}
-            >
-              {showMinistryList
-                ? '▲'
-                : '▼'}
-            </Text>
+            <Text style={styles.selectArrow}>{showMinistryList ? '▲' : '▼'}</Text>
           </Pressable>
 
           {showMinistryList && (
-            <View
-              style={styles.dropdown}
-            >
-              {ministries.map(
-                (item) => {
-                  const selected =
-                    (item === 'None' &&
-                      !ministry) ||
-                    ministry === item;
+            <View style={styles.dropdown}>
+              {ministries.map((item) => {
+                const selected = (item === 'None' && !ministry) || ministry === item;
 
-                  return (
-                    <Pressable
-                      key={item}
-                      style={[
-                        styles.dropdownOption,
-                        selected &&
-                          styles.dropdownOptionSelected,
-                      ]}
-                      onPress={() => {
-                        setMinistry(
-                          item ===
-                            'None'
-                            ? ''
-                            : item
-                        );
-
-                        setShowMinistryList(
-                          false
-                        );
-                      }}
-                    >
-                      <Text
-                        style={[
-                          styles.dropdownOptionText,
-                          selected &&
-                            styles.dropdownOptionTextSelected,
-                        ]}
-                      >
-                        {item}
-                      </Text>
-                    </Pressable>
-                  );
-                }
-              )}
+                return (
+                  <Pressable
+                    key={item}
+                    style={[styles.dropdownOption, selected && styles.dropdownOptionSelected]}
+                    onPress={() => {
+                      setMinistry(item === 'None' ? '' : item);
+                      setShowMinistryList(false);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                  >
+                    <Text style={[styles.dropdownOptionText, selected && styles.dropdownOptionTextSelected]}>
+                      {item}
+                    </Text>
+                  </Pressable>
+                );
+              })}
             </View>
           )}
 
           {/* Information Notice */}
 
           <View style={styles.notice}>
-            <Text
-              style={styles.noticeTitle}
-            >
-              Member Information
-            </Text>
-
-            <Text
-              style={styles.noticeText}
-            >
-              Make sure the information is
-              accurate before saving the
-              member. Sensitive member
-              information is encrypted before
-              it is stored.
+            <Text style={styles.noticeTitle}>Member Information</Text>
+            <Text style={styles.noticeText}>
+              Make sure the information is accurate before saving the member. Sensitive member
+              information is encrypted before it is stored.
             </Text>
           </View>
 
           {/* Add Member */}
 
           <Pressable
-            style={[
-              styles.button,
-              loading &&
-                styles.buttonDisabled,
-            ]}
-            onPress={
-              handleAddMember
-            }
+            style={[styles.button, loading && styles.buttonDisabled]}
+            onPress={handleAddMember}
             disabled={loading}
+            accessibilityRole="button"
+            accessibilityLabel="Add member"
+            accessibilityState={{ disabled: loading, busy: loading }}
           >
-            {loading ? (
-              <ActivityIndicator
-                color="#ffffff"
-              />
-            ) : (
-              <Text
-                style={styles.buttonText}
-              >
-                Add Member
-              </Text>
-            )}
+            {loading ? <ActivityIndicator color={colors.surface} /> : <Text style={styles.buttonText}>Add Member</Text>}
           </Pressable>
 
           {/* Cancel */}
@@ -1725,14 +984,10 @@ export default function AddMemberScreen() {
             style={styles.cancelButton}
             onPress={() => router.replace('/members')}
             disabled={loading}
+            accessibilityRole="button"
+            accessibilityLabel="Cancel"
           >
-            <Text
-              style={
-                styles.cancelButtonText
-              }
-            >
-              Cancel
-            </Text>
+            <Text style={styles.cancelButtonText}>Cancel</Text>
           </Pressable>
         </View>
       </ScrollView>
@@ -1740,12 +995,12 @@ export default function AddMemberScreen() {
       {/* Modal */}
 
       <AppModal
-        visible={modalVisible}
-        title={modalTitle}
-        message={modalMessage}
+        visible={modal.visible}
+        title={modal.title}
+        message={modal.message}
         buttonText="OK"
         onClose={() => {
-          setModalVisible(false);
+          modal.hide();
 
           if (success) {
             router.back();
@@ -1763,7 +1018,7 @@ export default function AddMemberScreen() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: colors.background,
   },
 
   container: {
@@ -1782,27 +1037,27 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 30,
     fontWeight: '700',
-    color: '#111827',
+    color: colors.textPrimary,
   },
 
   subtitle: {
     fontSize: 14,
-    color: '#6b7280',
+    color: colors.textSecondary,
     marginTop: 5,
   },
 
   form: {
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 16,
+    borderColor: colors.border,
+    borderRadius: radii.lg + 2,
     padding: 22,
   },
 
   label: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#374151',
+    color: colors.textLabel,
     marginTop: 18,
     marginBottom: 8,
   },
@@ -1810,12 +1065,12 @@ const styles = StyleSheet.create({
   input: {
     height: 48,
     borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 9,
+    borderColor: colors.borderInput,
+    borderRadius: radii.sm,
     paddingHorizontal: 14,
     fontSize: 15,
-    color: '#111827',
-    backgroundColor: '#ffffff',
+    color: colors.textPrimary,
+    backgroundColor: colors.surface,
   },
 
   textArea: {
@@ -1825,13 +1080,9 @@ const styles = StyleSheet.create({
 
   helperText: {
     fontSize: 12,
-    color: '#9ca3af',
+    color: colors.textMuted,
     marginTop: 5,
   },
-
-  // ======================================
-  // Radio buttons
-  // ======================================
 
   optionContainer: {
     gap: 8,
@@ -1840,16 +1091,16 @@ const styles = StyleSheet.create({
   option: {
     minHeight: 48,
     borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 9,
+    borderColor: colors.borderInput,
+    borderRadius: radii.sm,
     paddingHorizontal: 14,
     flexDirection: 'row',
     alignItems: 'center',
   },
 
   optionSelected: {
-    borderColor: '#111827',
-    backgroundColor: '#f8fafc',
+    borderColor: colors.textPrimary,
+    backgroundColor: colors.background,
   },
 
   radio: {
@@ -1857,71 +1108,67 @@ const styles = StyleSheet.create({
     height: 20,
     borderRadius: 10,
     borderWidth: 2,
-    borderColor: '#9ca3af',
+    borderColor: colors.textMuted,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 10,
   },
 
   radioSelected: {
-    borderColor: '#111827',
+    borderColor: colors.textPrimary,
   },
 
   radioInner: {
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: '#111827',
+    backgroundColor: colors.textPrimary,
   },
 
   optionText: {
     fontSize: 14,
-    color: '#374151',
+    color: colors.textLabel,
   },
 
   optionTextSelected: {
     fontWeight: '700',
-    color: '#111827',
+    color: colors.textPrimary,
   },
-
-  // ======================================
-  // Select / Dropdown
-  // ======================================
 
   selectInput: {
     minHeight: 48,
     borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 9,
+    borderColor: colors.borderInput,
+    borderRadius: radii.sm,
     paddingHorizontal: 14,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.surface,
   },
 
   selectText: {
     fontSize: 15,
-    color: '#111827',
+    color: colors.textPrimary,
     flex: 1,
   },
 
   placeholderText: {
-    color: '#9ca3af',
+    color: colors.textMuted,
   },
 
   selectArrow: {
     fontSize: 12,
-    color: '#6b7280',
+    color: colors.textSecondary,
     marginLeft: 10,
   },
 
   dropdown: {
     borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 9,
+    borderColor: colors.borderInput,
+    borderRadius: radii.sm,
     marginTop: 6,
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.surface,
     overflow: 'hidden',
   },
 
@@ -1930,33 +1177,29 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     justifyContent: 'center',
     borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
+    borderBottomColor: colors.border,
   },
 
   dropdownOptionSelected: {
-    backgroundColor: '#f1f5f9',
+    backgroundColor: colors.statusInactiveBg,
   },
 
   dropdownOptionText: {
     fontSize: 14,
-    color: '#374151',
+    color: colors.textLabel,
   },
 
   dropdownOptionTextSelected: {
     fontWeight: '700',
-    color: '#111827',
+    color: colors.textPrimary,
   },
-
-  // ======================================
-  // Spouse dropdown
-  // ======================================
 
   spouseDropdown: {
     borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 9,
+    borderColor: colors.borderInput,
+    borderRadius: radii.sm,
     marginTop: 6,
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.surface,
     overflow: 'hidden',
   },
 
@@ -1965,16 +1208,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     justifyContent: 'center',
     borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
+    borderBottomColor: colors.border,
   },
 
   spouseOptionSelected: {
-    backgroundColor: '#f1f5f9',
+    backgroundColor: colors.statusInactiveBg,
   },
 
   spouseOptionText: {
     fontSize: 14,
-    color: '#374151',
+    color: colors.textLabel,
   },
 
   loadingSpouse: {
@@ -1985,16 +1228,12 @@ const styles = StyleSheet.create({
 
   loadingSpouseText: {
     fontSize: 13,
-    color: '#6b7280',
+    color: colors.textSecondary,
   },
 
-  // ======================================
-  // Notice
-  // ======================================
-
   notice: {
-    backgroundColor: '#f8fafc',
-    borderRadius: 10,
+    backgroundColor: colors.background,
+    borderRadius: radii.md,
     padding: 14,
     marginTop: 22,
   },
@@ -2002,24 +1241,20 @@ const styles = StyleSheet.create({
   noticeTitle: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#374151',
+    color: colors.textLabel,
   },
 
   noticeText: {
     fontSize: 13,
     lineHeight: 19,
-    color: '#6b7280',
+    color: colors.textSecondary,
     marginTop: 5,
   },
 
-  // ======================================
-  // Buttons
-  // ======================================
-
   button: {
     height: 50,
-    backgroundColor: '#111827',
-    borderRadius: 9,
+    backgroundColor: colors.textPrimary,
+    borderRadius: radii.sm,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 25,
@@ -2030,7 +1265,7 @@ const styles = StyleSheet.create({
   },
 
   buttonText: {
-    color: '#ffffff',
+    color: colors.surface,
     fontSize: 15,
     fontWeight: '600',
   },
@@ -2041,13 +1276,9 @@ const styles = StyleSheet.create({
   },
 
   cancelButtonText: {
-    color: '#6b7280',
+    color: colors.textSecondary,
     fontSize: 15,
   },
-
-  // ======================================
-  // Access denied
-  // ======================================
 
   center: {
     flex: 1,
@@ -2059,12 +1290,12 @@ const styles = StyleSheet.create({
   deniedTitle: {
     fontSize: 24,
     fontWeight: '700',
-    color: '#111827',
+    color: colors.textPrimary,
   },
 
   deniedText: {
     fontSize: 14,
-    color: '#6b7280',
+    color: colors.textSecondary,
     marginTop: 8,
     textAlign: 'center',
   },

@@ -19,57 +19,40 @@ function jsonResponse(body: Record<string, unknown>, status = 200) {
 
 /*
  * ========================================
- * Allowed origins -> invite path
+ * Activation code
  * ========================================
- * Centralizing this makes it easy to see (and keep in sync with)
- * Supabase's Auth "Redirect URLs" allow-list, which MUST contain
- * the exact resulting `${origin}${path}` value for each entry below,
- * or generateLink() will silently fall back to your project's Site URL.
+ *
+ * Kept in sync with create-admin-user, which generates a code
+ * the same way when an admin is first created.
  */
-const ALLOWED_ORIGINS: Record<string, string> = {
-  "https://jarvs06.github.io": "/MCBC/invite",
-  "http://localhost:3000": "/invite",
-  "http://localhost:8081": "/invite",
-  "http://localhost:8082": "/invite",
-  "http://localhost:19006": "/invite",
-};
+const CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+const CODE_LENGTH = 10;
+const CODE_EXPIRY_MS = 24 * 60 * 60 * 1000;
 
-function normalizeOrigin(value: string | null): string | null {
-  if (!value) return null;
-  try {
-    // new URL(...).origin strips any trailing slash, path, query, etc.
-    return new URL(value).origin;
-  } catch {
-    return null;
+function generateActivationCode(): string {
+  const bytes = new Uint8Array(CODE_LENGTH);
+  crypto.getRandomValues(bytes);
+
+  let code = "";
+
+  for (let i = 0; i < CODE_LENGTH; i++) {
+    code += CODE_ALPHABET[bytes[i] % CODE_ALPHABET.length];
   }
+
+  return code;
 }
 
-function resolveRedirectTo(req: Request): { redirectTo: string | null; origin: string; referer: string } {
-  const rawOrigin = req.headers.get("Origin")?.trim() || "";
-  const rawReferer = req.headers.get("Referer")?.trim() || "";
+function normalizeCode(input: string): string {
+  return input.trim().toUpperCase().replace(/[\s-]+/g, "");
+}
 
-  // Prefer Origin (always sent by browsers on cross-origin fetch/XHR).
-  const originCandidate = normalizeOrigin(rawOrigin);
-  if (originCandidate && ALLOWED_ORIGINS[originCandidate]) {
-    return {
-      redirectTo: `${originCandidate}${ALLOWED_ORIGINS[originCandidate]}`,
-      origin: rawOrigin,
-      referer: rawReferer,
-    };
-  }
+async function hashCode(normalized: string): Promise<string> {
+  const data = new TextEncoder().encode(normalized);
+  const digest = await crypto.subtle.digest("SHA-256", data);
 
-  // Fall back to Referer's origin (covers cases where Origin is stripped,
-  // e.g. some same-origin or navigation requests).
-  const refererCandidate = normalizeOrigin(rawReferer);
-  if (refererCandidate && ALLOWED_ORIGINS[refererCandidate]) {
-    return {
-      redirectTo: `${refererCandidate}${ALLOWED_ORIGINS[refererCandidate]}`,
-      origin: rawOrigin,
-      referer: rawReferer,
-    };
-  }
-
-  return { redirectTo: null, origin: rawOrigin, referer: rawReferer };
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 Deno.serve(async (req: Request) => {
@@ -103,22 +86,6 @@ Deno.serve(async (req: Request) => {
     if (!supabaseUrl || !serviceRoleKey) {
       console.error("Missing required Supabase environment variables.");
       return jsonResponse({ error: "Server configuration error." }, 500);
-    }
-
-    /*
-     * ========================================
-     * Determine activation redirect URL
-     * ========================================
-     */
-    const { redirectTo, origin, referer } = resolveRedirectTo(req);
-
-    console.log("Activation Origin:", origin);
-    console.log("Activation Referer:", referer);
-    console.log("Activation Redirect:", redirectTo);
-
-    if (!redirectTo) {
-      console.error("Invalid activation origin:", { origin, referer });
-      return jsonResponse({ error: "Invalid activation redirect origin." }, 400);
     }
 
     /*
@@ -196,7 +163,7 @@ Deno.serve(async (req: Request) => {
       callerProfile.approved !== true
     ) {
       return jsonResponse(
-        { error: "Only an active, approved Super Admin can generate activation links." },
+        { error: "Only an active, approved Super Admin can generate activation codes." },
         403
       );
     }
@@ -227,7 +194,7 @@ Deno.serve(async (req: Request) => {
 
     if (adminId === caller.id) {
       return jsonResponse(
-        { error: "You cannot generate an activation link for your own account." },
+        { error: "You cannot generate an activation code for your own account." },
         403
       );
     }
@@ -255,25 +222,8 @@ Deno.serve(async (req: Request) => {
      */
     if (targetProfile.status !== "Pending") {
       return jsonResponse(
-        { error: "Activation links can only be generated for Pending administrator accounts." },
+        { error: "Activation codes can only be generated for Pending administrator accounts." },
         400
-      );
-    }
-
-    /*
-     * ========================================
-     * Get Auth user
-     * ========================================
-     */
-    const { data: authUserData, error: authUserError } = await supabaseAdmin.auth.admin.getUserById(
-      adminId
-    );
-
-    if (authUserError || !authUserData.user) {
-      console.error("Target Auth user lookup error:", authUserError);
-      return jsonResponse(
-        { error: "Unable to find the administrator's authentication account." },
-        404
       );
     }
 
@@ -281,74 +231,81 @@ Deno.serve(async (req: Request) => {
      * ========================================
      * Get email
      * ========================================
+     *
+     * admin_profiles has no email column — it only ever lives in
+     * auth.users.
      */
+    const { data: authUserData, error: authUserError } = await supabaseAdmin.auth.admin.getUserById(
+      adminId
+    );
+
+    if (authUserError || !authUserData.user?.email) {
+      console.error("Target Auth user lookup error:", authUserError);
+      return jsonResponse(
+        { error: "Unable to find the administrator's authentication account." },
+        404
+      );
+    }
+
     const email = authUserData.user.email;
 
-    if (!email) {
-      return jsonResponse(
-        { error: "The administrator account does not have an email address." },
-        400
-      );
+    /*
+     * ========================================
+     * Invalidate the existing code
+     * ========================================
+     *
+     * At most one unused code should exist per administrator at
+     * a time (also enforced by a partial unique index in the
+     * database) — deleting the old row is simpler than adding a
+     * separate "invalidated" state, and matches this app's
+     * general lack of audit-trail columns elsewhere.
+     */
+    const { error: deleteOldCodeError } = await supabaseAdmin
+      .from("admin_activation_codes")
+      .delete()
+      .eq("admin_id", adminId)
+      .is("used_at", null);
+
+    if (deleteOldCodeError) {
+      console.error("Delete previous activation code error:", deleteOldCodeError);
+      return jsonResponse({ error: "Unable to generate a new activation code." }, 500);
     }
 
     /*
      * ========================================
-     * Generate invitation link
+     * Generate and store the new code
      * ========================================
+     *
+     * DO NOT log the raw code.
      */
-    console.log("Generating activation link for:", email);
-    console.log("Using redirect URL:", redirectTo);
+    const rawCode = generateActivationCode();
+    const codeHash = await hashCode(normalizeCode(rawCode));
+    const expiresAt = new Date(Date.now() + CODE_EXPIRY_MS).toISOString();
 
-    let inviteData: Awaited<ReturnType<typeof supabaseAdmin.auth.admin.generateLink>>["data"];
-    let inviteError: Awaited<ReturnType<typeof supabaseAdmin.auth.admin.generateLink>>["error"];
-
-    const firstAttempt = await supabaseAdmin.auth.admin.generateLink({
-      type: "invite",
-      email,
-      options: { redirectTo },
-    });
-
-    inviteData = firstAttempt.data;
-    inviteError = firstAttempt.error;
-
-    /*
-     * "invite" only works for auth users that don't already exist.
-     * The target's auth account was already created by the *original*
-     * invite, so regenerating/resending hits AuthApiError
-     * (status 422, code "email_exists"). In that case, fall back to a
-     * "recovery" link, which is valid for an existing-but-unconfirmed
-     * user and still honors the same redirectTo.
-     */
-    if (inviteError && (inviteError as { code?: string }).code === "email_exists") {
-      console.log(
-        "Invite link failed with email_exists; falling back to recovery link for:",
-        email
-      );
-
-      const fallbackAttempt = await supabaseAdmin.auth.admin.generateLink({
-        type: "recovery",
-        email,
-        options: { redirectTo },
+    const { error: insertCodeError } = await supabaseAdmin
+      .from("admin_activation_codes")
+      .insert({
+        admin_id: adminId,
+        code_hash: codeHash,
+        expires_at: expiresAt,
+        created_by: caller.id,
       });
 
-      inviteData = fallbackAttempt.data;
-      inviteError = fallbackAttempt.error;
-    }
-
-    if (inviteError || !inviteData?.properties?.action_link) {
-      console.error("Generate activation link error:", inviteError);
-      return jsonResponse({ error: "Unable to generate a new activation link." }, 500);
+    if (insertCodeError) {
+      console.error("Store activation code error:", insertCodeError);
+      return jsonResponse({ error: "Unable to generate a new activation code." }, 500);
     }
 
     /*
      * ========================================
-     * Return activation link
+     * Return the activation code
      * ========================================
      */
     return jsonResponse({
       success: true,
-      message: "A new administrator activation link has been generated.",
-      activation_link: inviteData.properties.action_link,
+      message: "A new administrator activation code has been generated.",
+      activation_code: rawCode,
+      expires_at: expiresAt,
       admin: {
         id: targetProfile.id,
         full_name: targetProfile.full_name,
@@ -363,7 +320,7 @@ Deno.serve(async (req: Request) => {
      * Unexpected error
      * ========================================
      */
-    console.error("Resend admin invite unexpected error:", error);
+    console.error("Regenerate admin activation code unexpected error:", error);
     return jsonResponse({ error: "Unexpected server error." }, 500);
   }
 });

@@ -1,218 +1,83 @@
+import { router, useLocalSearchParams } from 'expo-router';
+import { useEffect, useState } from 'react';
 import {
-    router,
-    useLocalSearchParams,
-} from 'expo-router';
-
-import {
-    useEffect,
-    useState,
-} from 'react';
-
-import {
-    ActivityIndicator,
-    KeyboardAvoidingView,
-    Platform,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from 'react-native';
 
 import AppModal from '@/components/AppModal';
-
-import {
-    useAuth,
-} from '@/contexts/AuthContext';
-
-import {
-    supabase,
-} from '@/lib/supabase';
-
-type AdminRole =
-  | 'Super Admin'
-  | 'Viewer';
-
-type AdminStatus =
-  | 'Pending'
-  | 'Active'
-  | 'Disabled';
-
-type AdminProfile = {
-  id: string;
-
-  full_name: string;
-
-  role: AdminRole;
-
-  status: AdminStatus;
-
-  approved: boolean;
-
-  created_at: string;
-
-  updated_at: string;
-};
+import { colors, radii } from '@/constants/theme';
+import { useAuth } from '@/contexts/AuthContext';
+import { useAppModal } from '@/hooks/useAppModal';
+import { resolveEdgeFunctionError } from '@/lib/edgeFunctionError';
+import { supabase } from '@/lib/supabase';
+import type { AdminProfile, AdminRole } from '@/types/admin';
 
 export default function EditAdminScreen() {
-  /*
-   * ========================================
-   * AUTH
-   * ========================================
-   */
+  const { profile, isSuperAdmin } = useAuth();
 
-  const {
-    profile,
-    isSuperAdmin,
-  } = useAuth();
+  const params = useLocalSearchParams<{ id?: string }>();
+  const adminId = typeof params.id === 'string' ? params.id : '';
 
-  /*
-   * ========================================
-   * ROUTE PARAM
-   * ========================================
-   */
+  // ----------------------------------------
+  // State
+  // ----------------------------------------
 
-  const params =
-    useLocalSearchParams<{
-      id?: string;
-    }>();
+  const [admin, setAdmin] = useState<AdminProfile | null>(null);
+  const [fullName, setFullName] = useState('');
+  const [role, setRole] = useState<AdminRole>('Viewer');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
-  const adminId =
-    typeof params.id === 'string'
-      ? params.id
-      : '';
+  const modal = useAppModal();
+  const [success, setSuccess] = useState(false);
 
-  /*
-   * ========================================
-   * STATE
-   * ========================================
-   */
-
-  const [
-    admin,
-    setAdmin,
-  ] =
-    useState<AdminProfile | null>(null);
-
-  const [
-    fullName,
-    setFullName,
-  ] =
-    useState('');
-
-  const [
-    role,
-    setRole,
-  ] =
-    useState<AdminRole>('Viewer');
-
-  const [
-    loading,
-    setLoading,
-  ] =
-    useState(true);
-
-  const [
-    saving,
-    setSaving,
-  ] =
-    useState(false);
-
-  const [
-    modalVisible,
-    setModalVisible,
-  ] =
-    useState(false);
-
-  const [
-    modalTitle,
-    setModalTitle,
-  ] =
-    useState('');
-
-  const [
-    modalMessage,
-    setModalMessage,
-  ] =
-    useState('');
-
-  const [
-    modalSuccess,
-    setModalSuccess,
-  ] =
-    useState(false);
-
-  /*
-   * ========================================
-   * MODAL
-   * ========================================
-   */
-
-  function showModal(
-    title: string,
-    message: string,
-    success = false
-  ) {
-    setModalTitle(title);
-    setModalMessage(message);
-    setModalSuccess(success);
-    setModalVisible(true);
+  function finish(title: string, message: string, isSuccess = false) {
+    setSuccess(isSuccess);
+    modal.show(title, message);
   }
 
-  /*
-   * ========================================
-   * LOAD ADMIN
-   * ========================================
-   */
+  // ----------------------------------------
+  // Load admin
+  // ----------------------------------------
 
   useEffect(() => {
     let mounted = true;
 
     async function loadAdmin() {
       if (!isSuperAdmin) {
-        if (mounted) {
-          setLoading(false);
-        }
-
+        if (mounted) setLoading(false);
         return;
       }
 
       if (!adminId) {
         if (mounted) {
           setLoading(false);
-
-          showModal(
-            'Invalid Administrator',
-            'No administrator was selected.'
-          );
+          finish('Invalid Administrator', 'No administrator was selected.');
         }
 
         return;
       }
 
       try {
-        const {
-          data,
-          error,
-        } =
-          await supabase
-            .from('admin_profiles')
-            .select('*')
-            .eq('id', adminId)
-            .single();
+        const { data, error } = await supabase
+          .from('admin_profiles')
+          .select('*')
+          .eq('id', adminId)
+          .single();
 
         if (error) {
-          console.error(
-            '[ADMIN EDIT] Load error:',
-            error
-          );
+          console.error('[ADMIN EDIT] Load error:', error);
 
           if (mounted) {
-            showModal(
-              'Unable to Load Administrator',
-              'We could not load this administrator account.'
-            );
+            finish('Unable to Load Administrator', 'We could not load this administrator account.');
           }
 
           return;
@@ -222,31 +87,16 @@ export default function EditAdminScreen() {
           return;
         }
 
-        const loadedAdmin =
-          data as AdminProfile;
+        const loadedAdmin = data as AdminProfile;
 
-        setAdmin(
-          loadedAdmin
-        );
-
-        setFullName(
-          loadedAdmin.full_name
-        );
-
-        setRole(
-          loadedAdmin.role
-        );
+        setAdmin(loadedAdmin);
+        setFullName(loadedAdmin.full_name);
+        setRole(loadedAdmin.role);
       } catch (error) {
-        console.error(
-          '[ADMIN EDIT] Unexpected load error:',
-          error
-        );
+        console.error('[ADMIN EDIT] Unexpected load error:', error);
 
         if (mounted) {
-          showModal(
-            'Error',
-            'Something went wrong while loading the administrator.'
-          );
+          finish('Error', 'Something went wrong while loading the administrator.');
         }
       } finally {
         if (mounted) {
@@ -260,42 +110,27 @@ export default function EditAdminScreen() {
     return () => {
       mounted = false;
     };
-  }, [
-    adminId,
-    isSuperAdmin,
-  ]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adminId, isSuperAdmin]);
 
-  /*
-   * ========================================
-   * SAVE
-   * ========================================
-   */
+  // ----------------------------------------
+  // Save
+  // ----------------------------------------
 
   async function handleSave() {
     if (!admin) {
       return;
     }
 
-    const trimmedName =
-      fullName.trim();
+    const trimmedName = fullName.trim();
 
     if (!trimmedName) {
-      showModal(
-        'Missing Information',
-        'Full name is required.'
-      );
-
+      finish('Missing Information', 'Full name is required.');
       return;
     }
 
-    if (
-      trimmedName.length > 150
-    ) {
-      showModal(
-        'Invalid Name',
-        'Full name cannot exceed 150 characters.'
-      );
-
+    if (trimmedName.length > 150) {
+      finish('Invalid Name', 'Full name cannot exceed 150 characters.');
       return;
     }
 
@@ -307,252 +142,128 @@ export default function EditAdminScreen() {
       setSaving(true);
 
       /*
-       * Sensitive administrator changes are
-       * handled by an Edge Function.
-       *
-       * The client never directly updates
+       * Sensitive administrator changes are handled by an Edge
+       * Function. The client never directly updates
        * role/status/approved.
        */
-
-      const {
-        data,
-        error,
-      } =
-        await supabase.functions.invoke(
-          'update-admin-profile',
-          {
-            body: {
-              admin_id:
-                admin.id,
-
-              full_name:
-                trimmedName,
-
-              role,
-            },
-          }
-        );
+      const { data, error } = await supabase.functions.invoke('update-admin-profile', {
+        body: {
+          admin_id: admin.id,
+          full_name: trimmedName,
+          role,
+        },
+      });
 
       if (error) {
-        console.error(
-          '[ADMIN EDIT] Update error:',
-          error
-        );
+        console.error('[ADMIN EDIT] Update error:', error);
 
-        let message =
-          error.message ||
-          'Unable to update administrator.';
-
-        try {
-          if (
-            'context' in error &&
-            error.context
-          ) {
-            const body =
-              await error.context.json();
-
-            message =
-              body?.error ??
-              body?.message ??
-              message;
-          }
-        } catch {
-          // Keep the original error message.
-        }
-
-        showModal(
-          'Update Failed',
-          message
-        );
+        const { title, message } = await resolveEdgeFunctionError(error, 'Update Failed');
+        finish(title, message);
 
         return;
       }
 
-      if (
-        !data?.success
-      ) {
-        showModal(
-          'Update Failed',
-          data?.error ??
-            'Unable to update administrator.'
-        );
-
+      if (!data?.success) {
+        finish('Update Failed', data?.error ?? 'Unable to update administrator.');
         return;
       }
 
       /*
-       * Update the local form state from
-       * the server response.
+       * Update the local form state from the server response.
        */
-
       if (data.profile) {
-        setAdmin(
-          data.profile as AdminProfile
-        );
-
-        setFullName(
-          data.profile.full_name
-        );
-
-        setRole(
-          data.profile.role
-        );
+        setAdmin(data.profile as AdminProfile);
+        setFullName(data.profile.full_name);
+        setRole(data.profile.role);
       }
 
-      showModal(
-        'Administrator Updated',
-        'The administrator account has been updated successfully.',
-        true
-      );
+      finish('Administrator Updated', 'The administrator account has been updated successfully.', true);
     } catch (error) {
-      console.error(
-        '[ADMIN EDIT] Unexpected update error:',
-        error
-      );
-
-      showModal(
-        'Update Failed',
-        'Something went wrong while updating the administrator.'
-      );
+      console.error('[ADMIN EDIT] Unexpected update error:', error);
+      finish('Update Failed', 'Something went wrong while updating the administrator.');
     } finally {
       setSaving(false);
     }
   }
 
-  /*
-   * ========================================
-   * ACCESS CONTROL
-   * ========================================
-   */
+  // ----------------------------------------
+  // Access control
+  // ----------------------------------------
 
   if (!isSuperAdmin) {
     return (
       <View style={styles.centerScreen}>
-        <Text style={styles.accessTitle}>
-          Access Denied
-        </Text>
-
-        <Text style={styles.accessText}>
-          Only Super Admin can manage administrator
-          accounts.
-        </Text>
+        <Text style={styles.accessTitle}>Access Denied</Text>
+        <Text style={styles.accessText}>Only Super Admin can manage administrator accounts.</Text>
 
         <Pressable
           style={styles.primaryButton}
-          onPress={() =>
-            router.replace('/dashboard')
-          }
+          onPress={() => router.replace('/dashboard')}
+          accessibilityRole="button"
+          accessibilityLabel="Back to dashboard"
         >
-          <Text style={styles.primaryButtonText}>
-            Back to Dashboard
-          </Text>
+          <Text style={styles.primaryButtonText}>Back to Dashboard</Text>
         </Pressable>
       </View>
     );
   }
 
-  /*
-   * ========================================
-   * LOADING
-   * ========================================
-   */
+  // ----------------------------------------
+  // Loading
+  // ----------------------------------------
 
   if (loading) {
     return (
       <View style={styles.centerScreen}>
-        <ActivityIndicator
-          size="large"
-        />
-
-        <Text style={styles.loadingText}>
-          Loading administrator...
-        </Text>
+        <ActivityIndicator size="large" />
+        <Text style={styles.loadingText}>Loading administrator...</Text>
       </View>
     );
   }
 
-  /*
-   * ========================================
-   * NO ADMIN
-   * ========================================
-   */
+  // ----------------------------------------
+  // No admin
+  // ----------------------------------------
 
   if (!admin) {
     return (
       <View style={styles.centerScreen}>
-        <Text style={styles.accessTitle}>
-          Administrator Not Found
-        </Text>
+        <Text style={styles.accessTitle}>Administrator Not Found</Text>
 
         <Pressable
           style={styles.primaryButton}
-          onPress={() =>
-            router.back()
-          }
+          onPress={() => router.back()}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
         >
-          <Text style={styles.primaryButtonText}>
-            Go Back
-          </Text>
+          <Text style={styles.primaryButtonText}>Go Back</Text>
         </Pressable>
       </View>
     );
   }
 
   /*
-   * ========================================
-   * SELF EDIT
-   * ========================================
-   *
-   * A Super Admin can update their own
-   * display name, but cannot change their
-   * own role through this screen.
+   * A Super Admin can update their own display name, but cannot
+   * change their own role through this screen.
    */
+  const isEditingSelf = admin.id === profile?.id;
 
-  const isEditingSelf =
-    admin.id === profile?.id;
-
-  /*
-   * ========================================
-   * SCREEN
-   * ========================================
-   */
+  // ----------------------------------------
+  // Screen
+  // ----------------------------------------
 
   return (
-    <KeyboardAvoidingView
-      style={styles.screen}
-      behavior={
-        Platform.OS === 'ios'
-          ? 'padding'
-          : undefined
-      }
-    >
-      <ScrollView
-        contentContainerStyle={
-          styles.content
-        }
-        keyboardShouldPersistTaps="handled"
-      >
+    <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         {/* Header */}
 
         <View style={styles.header}>
-          <Pressable
-            onPress={() =>
-              router.back()
-            }
-          >
-            <Text style={styles.backText}>
-              ‹ Back
-            </Text>
+          <Pressable onPress={() => router.back()} accessibilityRole="button" accessibilityLabel="Go back">
+            <Text style={styles.backText}>‹ Back</Text>
           </Pressable>
 
-          <Text style={styles.title}>
-            Edit Administrator
-          </Text>
-
-          <Text style={styles.subtitle}>
-            Update this administrator's account
-            information and role.
-          </Text>
+          <Text style={styles.title}>Edit Administrator</Text>
+          <Text style={styles.subtitle}>Update this administrator's account information and role.</Text>
         </View>
 
         {/* Form */}
@@ -560,204 +271,119 @@ export default function EditAdminScreen() {
         <View style={styles.card}>
           {/* Full Name */}
 
-          <Text style={styles.label}>
-            Full Name
-          </Text>
+          <Text style={styles.label}>Full Name</Text>
 
           <TextInput
             style={styles.input}
             value={fullName}
-            onChangeText={
-              setFullName
-            }
+            onChangeText={setFullName}
             placeholder="Full Name"
-            placeholderTextColor="#9ca3af"
+            placeholderTextColor={colors.textMuted}
             editable={!saving}
             autoCapitalize="words"
           />
 
           {/* Role */}
 
-          <Text style={styles.label}>
-            Role
-          </Text>
+          <Text style={styles.label}>Role</Text>
 
           <View style={styles.roleRow}>
             <Pressable
               style={[
                 styles.roleOption,
-                role === 'Viewer' &&
-                  styles.roleOptionSelected,
-                isEditingSelf &&
-                  styles.roleOptionDisabled,
+                role === 'Viewer' && styles.roleOptionSelected,
+                isEditingSelf && styles.roleOptionDisabled,
               ]}
-              disabled={
-                saving ||
-                isEditingSelf
-              }
-              onPress={() =>
-                setRole('Viewer')
-              }
+              disabled={saving || isEditingSelf}
+              onPress={() => setRole('Viewer')}
+              accessibilityRole="radio"
+              accessibilityState={{ selected: role === 'Viewer', disabled: isEditingSelf }}
             >
-              <Text
-                style={[
-                  styles.roleOptionTitle,
-                  role === 'Viewer' &&
-                    styles.roleOptionTitleSelected,
-                ]}
-              >
+              <Text style={[styles.roleOptionTitle, role === 'Viewer' && styles.roleOptionTitleSelected]}>
                 Viewer
               </Text>
 
-              <Text
-                style={[
-                  styles.roleOptionText,
-                  role === 'Viewer' &&
-                    styles.roleOptionTextSelected,
-                ]}
-              >
-                Can use the application according
-                to Viewer permissions.
+              <Text style={[styles.roleOptionText, role === 'Viewer' && styles.roleOptionTextSelected]}>
+                Can use the application according to Viewer permissions.
               </Text>
             </Pressable>
 
             <Pressable
               style={[
                 styles.roleOption,
-                role === 'Super Admin' &&
-                  styles.roleOptionSelected,
-                isEditingSelf &&
-                  styles.roleOptionDisabled,
+                role === 'Super Admin' && styles.roleOptionSelected,
+                isEditingSelf && styles.roleOptionDisabled,
               ]}
-              disabled={
-                saving ||
-                isEditingSelf
-              }
-              onPress={() =>
-                setRole(
-                  'Super Admin'
-                )
-              }
+              disabled={saving || isEditingSelf}
+              onPress={() => setRole('Super Admin')}
+              accessibilityRole="radio"
+              accessibilityState={{ selected: role === 'Super Admin', disabled: isEditingSelf }}
             >
-              <Text
-                style={[
-                  styles.roleOptionTitle,
-                  role === 'Super Admin' &&
-                    styles.roleOptionTitleSelected,
-                ]}
-              >
+              <Text style={[styles.roleOptionTitle, role === 'Super Admin' && styles.roleOptionTitleSelected]}>
                 Super Admin
               </Text>
 
-              <Text
-                style={[
-                  styles.roleOptionText,
-                  role === 'Super Admin' &&
-                    styles.roleOptionTextSelected,
-                ]}
-              >
-                Can manage administrators and
-                privileged application functions.
+              <Text style={[styles.roleOptionText, role === 'Super Admin' && styles.roleOptionTextSelected]}>
+                Can manage administrators and privileged application functions.
               </Text>
             </Pressable>
           </View>
 
           {isEditingSelf && (
             <View style={styles.notice}>
-              <Text style={styles.noticeTitle}>
-                Your role cannot be changed here
-              </Text>
-
+              <Text style={styles.noticeTitle}>Your role cannot be changed here</Text>
               <Text style={styles.noticeText}>
-                For security, a Super Admin cannot
-                change their own administrator role.
+                For security, a Super Admin cannot change their own administrator role.
               </Text>
             </View>
           )}
 
           {/* Status */}
 
-          <Text style={styles.label}>
-            Status
-          </Text>
+          <Text style={styles.label}>Status</Text>
 
           <View style={styles.readOnlyField}>
-            <Text style={styles.statusText}>
-              {admin.status}
-            </Text>
+            <Text style={styles.statusText}>{admin.status}</Text>
           </View>
 
           {/* Approved */}
 
-          <Text style={styles.label}>
-            Approved
-          </Text>
+          <Text style={styles.label}>Approved</Text>
 
           <View style={styles.readOnlyField}>
-            <Text style={styles.statusText}>
-              {admin.approved
-                ? 'Yes'
-                : 'No'}
-            </Text>
+            <Text style={styles.statusText}>{admin.approved ? 'Yes' : 'No'}</Text>
           </View>
 
           {/* Save */}
 
           <Pressable
-            style={[
-              styles.primaryButton,
-              saving &&
-                styles.buttonDisabled,
-            ]}
-            onPress={
-              handleSave
-            }
+            style={[styles.primaryButton, saving && styles.buttonDisabled]}
+            onPress={handleSave}
             disabled={saving}
+            accessibilityRole="button"
+            accessibilityLabel="Save changes"
+            accessibilityState={{ disabled: saving, busy: saving }}
           >
             {saving ? (
               <>
-                <ActivityIndicator
-                  color="#ffffff"
-                  size="small"
-                />
-
-                <Text
-                  style={
-                    styles.primaryButtonText
-                  }
-                >
-                  Saving...
-                </Text>
+                <ActivityIndicator color={colors.surface} size="small" />
+                <Text style={styles.primaryButtonText}>Saving...</Text>
               </>
             ) : (
-              <Text
-                style={
-                  styles.primaryButtonText
-                }
-              >
-                Save Changes
-              </Text>
+              <Text style={styles.primaryButtonText}>Save Changes</Text>
             )}
           </Pressable>
 
           {/* Cancel */}
 
           <Pressable
-            style={
-              styles.cancelButton
-            }
-            onPress={() =>
-              router.back()
-            }
+            style={styles.cancelButton}
+            onPress={() => router.back()}
             disabled={saving}
+            accessibilityRole="button"
+            accessibilityLabel="Cancel"
           >
-            <Text
-              style={
-                styles.cancelButtonText
-              }
-            >
-              Cancel
-            </Text>
+            <Text style={styles.cancelButtonText}>Cancel</Text>
           </Pressable>
         </View>
       </ScrollView>
@@ -765,24 +391,14 @@ export default function EditAdminScreen() {
       {/* Modal */}
 
       <AppModal
-        visible={
-          modalVisible
-        }
-        title={
-          modalTitle
-        }
-        message={
-          modalMessage
-        }
+        visible={modal.visible}
+        title={modal.title}
+        message={modal.message}
         buttonText="OK"
         onClose={() => {
-          setModalVisible(
-            false
-          );
+          modal.hide();
 
-          if (
-            modalSuccess
-          ) {
+          if (success) {
             router.back();
           }
         }}
@@ -791,216 +407,213 @@ export default function EditAdminScreen() {
   );
 }
 
-/*
- * ==========================================
- * STYLES
- * ==========================================
- */
+// ========================================
+// Styles
+// ========================================
 
-const styles =
-  StyleSheet.create({
-    screen: {
-      flex: 1,
-      backgroundColor: '#f8fafc',
-    },
+const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
 
-    content: {
-      padding: 20,
-      paddingBottom: 50,
-    },
+  content: {
+    padding: 20,
+    paddingBottom: 50,
+  },
 
-    header: {
-      marginBottom: 20,
-    },
+  header: {
+    marginBottom: 20,
+  },
 
-    backText: {
-      fontSize: 14,
-      fontWeight: '600',
-      color: '#2563eb',
-      marginBottom: 12,
-    },
+  backText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.accent,
+    marginBottom: 12,
+  },
 
-    title: {
-      fontSize: 28,
-      fontWeight: '700',
-      color: '#111827',
-    },
+  title: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
 
-    subtitle: {
-      fontSize: 14,
-      lineHeight: 21,
-      color: '#6b7280',
-      marginTop: 6,
-    },
+  subtitle: {
+    fontSize: 14,
+    lineHeight: 21,
+    color: colors.textSecondary,
+    marginTop: 6,
+  },
 
-    card: {
-      backgroundColor: '#ffffff',
-      borderRadius: 16,
-      borderWidth: 1,
-      borderColor: '#e5e7eb',
-      padding: 20,
-    },
+  card: {
+    backgroundColor: colors.surface,
+    borderRadius: radii.lg + 2,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 20,
+  },
 
-    label: {
-      fontSize: 13,
-      fontWeight: '700',
-      color: '#374151',
-      marginTop: 18,
-      marginBottom: 8,
-    },
+  label: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.textLabel,
+    marginTop: 18,
+    marginBottom: 8,
+  },
 
-    input: {
-      height: 50,
-      borderWidth: 1,
-      borderColor: '#d1d5db',
-      borderRadius: 9,
-      paddingHorizontal: 14,
-      fontSize: 15,
-      color: '#111827',
-      backgroundColor: '#ffffff',
-    },
+  input: {
+    height: 50,
+    borderWidth: 1,
+    borderColor: colors.borderInput,
+    borderRadius: radii.sm,
+    paddingHorizontal: 14,
+    fontSize: 15,
+    color: colors.textPrimary,
+    backgroundColor: colors.surface,
+  },
 
-    roleRow: {
-      gap: 10,
-    },
+  roleRow: {
+    gap: 10,
+  },
 
-    roleOption: {
-      borderWidth: 1,
-      borderColor: '#d1d5db',
-      borderRadius: 12,
-      padding: 15,
-      backgroundColor: '#ffffff',
-    },
+  roleOption: {
+    borderWidth: 1,
+    borderColor: colors.borderInput,
+    borderRadius: radii.md + 2,
+    padding: 15,
+    backgroundColor: colors.surface,
+  },
 
-    roleOptionSelected: {
-      borderColor: '#111827',
-      backgroundColor: '#111827',
-    },
+  roleOptionSelected: {
+    borderColor: colors.textPrimary,
+    backgroundColor: colors.textPrimary,
+  },
 
-    roleOptionDisabled: {
-      opacity: 0.55,
-    },
+  roleOptionDisabled: {
+    opacity: 0.55,
+  },
 
-    roleOptionTitle: {
-      fontSize: 15,
-      fontWeight: '700',
-      color: '#111827',
-    },
+  roleOptionTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
 
-    roleOptionTitleSelected: {
-      color: '#ffffff',
-    },
+  roleOptionTitleSelected: {
+    color: colors.surface,
+  },
 
-    roleOptionText: {
-      fontSize: 12,
-      lineHeight: 18,
-      color: '#6b7280',
-      marginTop: 4,
-    },
+  roleOptionText: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: colors.textSecondary,
+    marginTop: 4,
+  },
 
-    roleOptionTextSelected: {
-      color: '#d1d5db',
-    },
+  roleOptionTextSelected: {
+    color: colors.borderInput,
+  },
 
-    notice: {
-      backgroundColor: '#f8fafc',
-      borderRadius: 10,
-      padding: 14,
-      marginTop: 14,
-    },
+  notice: {
+    backgroundColor: colors.background,
+    borderRadius: radii.md,
+    padding: 14,
+    marginTop: 14,
+  },
 
-    noticeTitle: {
-      fontSize: 13,
-      fontWeight: '700',
-      color: '#374151',
-    },
+  noticeTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.textLabel,
+  },
 
-    noticeText: {
-      fontSize: 12,
-      lineHeight: 18,
-      color: '#6b7280',
-      marginTop: 4,
-    },
+  noticeText: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: colors.textSecondary,
+    marginTop: 4,
+  },
 
-    readOnlyField: {
-      height: 50,
-      borderWidth: 1,
-      borderColor: '#e5e7eb',
-      borderRadius: 9,
-      paddingHorizontal: 14,
-      justifyContent: 'center',
-      backgroundColor: '#f3f4f6',
-    },
+  readOnlyField: {
+    height: 50,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.sm,
+    paddingHorizontal: 14,
+    justifyContent: 'center',
+    backgroundColor: colors.statusInactiveBg,
+  },
 
-    statusText: {
-      fontSize: 14,
-      fontWeight: '600',
-      color: '#4b5563',
-    },
+  statusText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.statusInactiveText,
+  },
 
-    primaryButton: {
-      height: 50,
-      borderRadius: 9,
-      backgroundColor: '#111827',
-      alignItems: 'center',
-      justifyContent: 'center',
-      flexDirection: 'row',
-      gap: 10,
-      marginTop: 24,
-    },
+  primaryButton: {
+    height: 50,
+    borderRadius: radii.sm,
+    backgroundColor: colors.textPrimary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 24,
+  },
 
-    primaryButtonText: {
-      color: '#ffffff',
-      fontSize: 14,
-      fontWeight: '600',
-    },
+  primaryButtonText: {
+    color: colors.surface,
+    fontSize: 14,
+    fontWeight: '600',
+  },
 
-    buttonDisabled: {
-      opacity: 0.6,
-    },
+  buttonDisabled: {
+    opacity: 0.6,
+  },
 
-    cancelButton: {
-      height: 50,
-      borderRadius: 9,
-      borderWidth: 1,
-      borderColor: '#d1d5db',
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginTop: 10,
-    },
+  cancelButton: {
+    height: 50,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: colors.borderInput,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 10,
+  },
 
-    cancelButtonText: {
-      color: '#374151',
-      fontSize: 14,
-      fontWeight: '600',
-    },
+  cancelButtonText: {
+    color: colors.textLabel,
+    fontSize: 14,
+    fontWeight: '600',
+  },
 
-    centerScreen: {
-      flex: 1,
-      alignItems: 'center',
-      justifyContent: 'center',
-      padding: 24,
-      backgroundColor: '#f8fafc',
-    },
+  centerScreen: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+    backgroundColor: colors.background,
+  },
 
-    loadingText: {
-      marginTop: 12,
-      color: '#6b7280',
-    },
+  loadingText: {
+    marginTop: 12,
+    color: colors.textSecondary,
+  },
 
-    accessTitle: {
-      fontSize: 24,
-      fontWeight: '700',
-      color: '#111827',
-      textAlign: 'center',
-    },
+  accessTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    textAlign: 'center',
+  },
 
-    accessText: {
-      fontSize: 14,
-      lineHeight: 21,
-      color: '#6b7280',
-      textAlign: 'center',
-      marginTop: 8,
-      maxWidth: 360,
-    },
-  });
+  accessText: {
+    fontSize: 14,
+    lineHeight: 21,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    marginTop: 8,
+    maxWidth: 360,
+  },
+});

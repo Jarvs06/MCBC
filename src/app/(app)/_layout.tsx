@@ -3,6 +3,7 @@ import {
   Stack,
 } from 'expo-router';
 
+import { AppShell } from '@/components/AppShell';
 import {
   useAuth,
 } from '@/contexts/AuthContext';
@@ -38,10 +39,12 @@ export default function AppLayout() {
   }
 
   return (
-    <Stack
-      screenOptions={{
-        headerShown: false,
-      }}
-    />
+    <AppShell>
+      <Stack
+        screenOptions={{
+          headerShown: false,
+        }}
+      />
+    </AppShell>
   );
 }

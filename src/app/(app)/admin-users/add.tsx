@@ -11,32 +11,45 @@ import {
   View,
 } from 'react-native';
 
-import {
-  FunctionsFetchError,
-  FunctionsHttpError,
-  FunctionsRelayError,
-} from '@supabase/supabase-js';
-
 import AppModal from '@/components/AppModal';
+import { colors, radii } from '@/constants/theme';
 import { useAuth } from '@/contexts/AuthContext';
+import { useAppModal } from '@/hooks/useAppModal';
+import { resolveEdgeFunctionError } from '@/lib/edgeFunctionError';
 import { supabase } from '@/lib/supabase';
+import { isValidEmail } from '@/lib/validators';
 
 const roles = [
   {
     value: 'Viewer' as const,
     title: 'Viewer',
-    description:
-      'Can view the system but cannot add, edit or delete.',
+    description: 'Can view the system but cannot add, edit or delete.',
   },
   {
     value: 'Super Admin' as const,
     title: 'Super Admin',
-    description:
-      'Full access to manage the entire system.',
+    description: 'Full access to manage the entire system.',
   },
 ];
 
 type Role = (typeof roles)[number]['value'];
+
+function formatExpiresAt(value: string): string {
+  if (!value) {
+    return '—';
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return '—';
+  }
+
+  return date.toLocaleString(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+}
 
 export default function AddAdminUserScreen() {
   const { isSuperAdmin } = useAuth();
@@ -45,128 +58,75 @@ export default function AddAdminUserScreen() {
   // Form
   // ----------------------------------------
 
-  const [fullName, setFullName] =
-    useState('');
-
-  const [email, setEmail] =
-    useState('');
-
-  const [role, setRole] =
-    useState<Role>('Viewer');
+  const [fullName, setFullName] = useState('');
+  const [email, setEmail] = useState('');
+  const [role, setRole] = useState<Role>('Viewer');
 
   // ----------------------------------------
   // Loading
   // ----------------------------------------
 
-  const [loading, setLoading] =
-    useState(false);
+  const [loading, setLoading] = useState(false);
 
   // ----------------------------------------
   // Modal
   // ----------------------------------------
 
-  const [modalVisible, setModalVisible] =
-    useState(false);
-
-  const [modalTitle, setModalTitle] =
-    useState('');
-
-  const [modalMessage, setModalMessage] =
-    useState('');
-
-  const [success, setSuccess] =
-    useState(false);
+  const modal = useAppModal();
 
   // ----------------------------------------
-  // Activation link
+  // Activation code
   // ----------------------------------------
 
-  const [activationLink, setActivationLink] =
-    useState('');
-
-  const [activationModalVisible, setActivationModalVisible] =
-    useState(false);
-
-  const [linkCopied, setLinkCopied] =
-    useState(false);
-
-  // ----------------------------------------
-  // Modal helper
-  // ----------------------------------------
-
-  function showModal(
-    title: string,
-    message: string,
-    isSuccess = false
-  ) {
-    setModalTitle(title);
-    setModalMessage(message);
-    setSuccess(isSuccess);
-    setModalVisible(true);
-  }
+  const [activationCode, setActivationCode] = useState('');
+  const [activationExpiresAt, setActivationExpiresAt] = useState('');
+  const [activationAdminName, setActivationAdminName] = useState('');
+  const [activationAdminEmail, setActivationAdminEmail] = useState('');
+  const [activationAdminRole, setActivationAdminRole] = useState('');
+  const [activationModalVisible, setActivationModalVisible] = useState(false);
+  const [codeCopied, setCodeCopied] = useState(false);
 
   // ----------------------------------------
   // Create User
   // ----------------------------------------
 
   async function handleCreateUser() {
-    const trimmedName =
-      fullName.trim();
+    const trimmedName = fullName.trim();
+    const trimmedEmail = email.trim().toLowerCase();
 
-    const trimmedEmail =
-      email.trim().toLowerCase();
-
-    // ----------------------------------------
-    // Validate name
-    // ----------------------------------------
-
+    /*
+     * ------------------------------------
+     * Validate name
+     * ------------------------------------
+     */
     if (!trimmedName) {
-      showModal(
-        'Missing Name',
-        'Please enter the user\'s full name.'
-      );
-
+      modal.show('Missing Name', "Please enter the user's full name.");
       return;
     }
 
     if (trimmedName.length < 2) {
-      showModal(
-        'Invalid Name',
-        'Please enter a valid full name.'
-      );
-
+      modal.show('Invalid Name', 'Please enter a valid full name.');
       return;
     }
 
-    // ----------------------------------------
-    // Validate email
-    // ----------------------------------------
-
+    /*
+     * ------------------------------------
+     * Validate email
+     * ------------------------------------
+     */
     if (!trimmedEmail) {
-      showModal(
-        'Missing Email',
-        'Please enter the user\'s email address.'
-      );
-
+      modal.show('Missing Email', "Please enter the user's email address.");
       return;
     }
 
-    const emailRegex =
-      /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-    if (!emailRegex.test(trimmedEmail)) {
-      showModal(
-        'Invalid Email',
-        'Please enter a valid email address.'
-      );
-
+    if (!isValidEmail(trimmedEmail)) {
+      modal.show('Invalid Email', 'Please enter a valid email address.');
       return;
     }
 
-    // ----------------------------------------
-    // Prevent duplicate request
-    // ----------------------------------------
-
+    /*
+     * Prevent duplicate request
+     */
     if (loading) {
       return;
     }
@@ -174,237 +134,121 @@ export default function AddAdminUserScreen() {
     try {
       setLoading(true);
 
-      console.log(
-        'Creating admin user:',
-        {
+      console.log('Creating admin user with role:', role);
+
+      /*
+       * ------------------------------------
+       * Call Edge Function
+       * ------------------------------------
+       */
+      const { data, error } = await supabase.functions.invoke('create-admin-user', {
+        body: {
           full_name: trimmedName,
           email: trimmedEmail,
           role,
-        }
-      );
-
-      // ----------------------------------------
-      // Call Edge Function
-      // ----------------------------------------
-
-      const {
-        data,
-        error,
-      } =
-        await supabase.functions.invoke(
-          'create-admin-user',
-          {
-            body: {
-              full_name:
-                trimmedName,
-
-              email:
-                trimmedEmail,
-
-              role,
-            },
-          }
-        );
-
-      // ----------------------------------------
-      // Edge Function Error
-      // ----------------------------------------
+        },
+      });
 
       if (error) {
-        console.error(
-          'Create admin function error:',
-          error
-        );
+        console.error('Create admin function error:', error);
 
-        // --------------------------------------
-        // HTTP error returned by Edge Function
-        // --------------------------------------
-
-        if (
-          error instanceof
-          FunctionsHttpError
-        ) {
-          try {
-            const errorBody =
-              await error.context.json();
-
-            console.error(
-              'Edge Function response:',
-              errorBody
-            );
-
-            const message =
-              errorBody?.error ??
-              errorBody?.message ??
-              'The server rejected the request.';
-
-            showModal(
-              'Registration Failed',
-              message
-            );
-          } catch (parseError) {
-            console.error(
-              'Could not parse Edge Function error:',
-              parseError
-            );
-
-            showModal(
-              'Registration Failed',
-              'The server rejected the request. Please check the Edge Function logs.'
-            );
-          }
-
-          return;
-        }
-
-        // --------------------------------------
-        // Network error
-        // --------------------------------------
-
-        if (
-          error instanceof
-          FunctionsFetchError
-        ) {
-          showModal(
-            'Connection Error',
-            'Could not connect to the registration service. Please check your internet connection and try again.'
-          );
-
-          return;
-        }
-
-        // --------------------------------------
-        // Relay error
-        // --------------------------------------
-
-        if (
-          error instanceof
-          FunctionsRelayError
-        ) {
-          showModal(
-            'Server Connection Error',
-            'The registration service could not be reached. Please try again.'
-          );
-
-          return;
-        }
-
-        // --------------------------------------
-        // Unknown error
-        // --------------------------------------
-
-        showModal(
-          'Registration Failed',
-          error.message ||
-            'Unable to register the user.'
-        );
-
+        const { title, message } = await resolveEdgeFunctionError(error, 'Registration Failed');
+        modal.show(title, message);
         return;
       }
 
-      // ----------------------------------------
-      // Successful HTTP response
-      // ----------------------------------------
-
-      console.log(
-        'Create admin response:',
-        data
-      );
+      /*
+       * ------------------------------------
+       * Successful HTTP response
+       * ------------------------------------
+       *
+       * IMPORTANT: never log `data` here — it carries the
+       * one-time activation link (a live auth token). Logging it
+       * would leave a way to hijack the invited account sitting
+       * in the console/device logs.
+       */
+      console.log('Create admin response success:', data?.success === true);
 
       if (!data?.success) {
-        showModal(
-          'Registration Failed',
-          data?.error ??
-            'Unable to create the user.'
-        );
-
+        modal.show('Registration Failed', data?.error ?? 'Unable to create the user.');
         return;
       }
 
-      // ----------------------------------------
-      // Get activation link
-      // ----------------------------------------
+      /*
+       * ------------------------------------
+       * Get activation code
+       * ------------------------------------
+       */
+      const newActivationCode = data?.activation_code;
 
-      const activationLink =
-        data?.activation_link;
+      if (!newActivationCode) {
+        console.error('Registration succeeded but no activation code was returned:', data);
 
-      if (!activationLink) {
-        console.error(
-          'Registration succeeded but no activation link was returned:',
-          data
-        );
-
-        showModal(
+        modal.show(
           'Registration Incomplete',
-          'The user was created successfully, but no activation link was returned by the server. Please check the create-admin-user Edge Function.'
+          'The user was created successfully, but no activation code was returned by the server. Please check the create-admin-user Edge Function.'
         );
-
         return;
       }
 
-      // ----------------------------------------
-      // Registration successful
-      // ----------------------------------------
+      /*
+       * ------------------------------------
+       * Registration successful
+       * ------------------------------------
+       *
+       * Capture the fields the modal needs before the form resets.
+       */
+      setActivationAdminName(trimmedName);
+      setActivationAdminEmail(trimmedEmail);
+      setActivationAdminRole(role);
+      setActivationCode(newActivationCode);
+      setActivationExpiresAt(data?.expires_at ?? '');
+      setCodeCopied(false);
 
       setFullName('');
       setEmail('');
       setRole('Viewer');
 
-      setActivationLink(activationLink);
-      setLinkCopied(false);
       setActivationModalVisible(true);
-
     } catch (error) {
-      // ----------------------------------------
-      // Unexpected error
-      // ----------------------------------------
-
-      console.error(
-        'Unexpected create admin error:',
-        error
-      );
-
-      showModal(
+      console.error('Unexpected create admin error:', error);
+      modal.show(
         'Registration Error',
         'Something unexpected happened while creating the user. Please try again.'
       );
-
     } finally {
       setLoading(false);
     }
   }
 
-  // ----------------------------------------
-  // Access control
-  // ----------------------------------------
-
+  /*
+   * ========================================
+   * Access control
+   * ========================================
+   */
   if (!isSuperAdmin) {
     return (
       <View style={styles.center}>
-        <Text style={styles.deniedTitle}>
-          Access Denied
-        </Text>
-
-        <Text style={styles.deniedText}>
-          Only Super Admin can register users.
-        </Text>
+        <Text style={styles.deniedTitle}>Access Denied</Text>
+        <Text style={styles.deniedText}>Only Super Admin can register users.</Text>
 
         <Pressable
           style={styles.backButton}
           onPress={() => router.back()}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
         >
-          <Text style={styles.backButtonText}>
-            Go Back
-          </Text>
+          <Text style={styles.backButtonText}>Go Back</Text>
         </Pressable>
       </View>
     );
   }
 
-  // ----------------------------------------
-  // Screen
-  // ----------------------------------------
-
+  /*
+   * ========================================
+   * Screen
+   * ========================================
+   */
   return (
     <View style={styles.screen}>
       <ScrollView
@@ -412,299 +256,207 @@ export default function AddAdminUserScreen() {
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
-        {/* ---------------------------------- */}
-        {/* Header */}
-        {/* ---------------------------------- */}
+        {/* ================================ HEADER ================================ */}
 
         <View style={styles.header}>
-          <Text style={styles.title}>
-            Register User
-          </Text>
-
+          <Text style={styles.title}>Register User</Text>
           <Text style={styles.subtitle}>
-            Create an administrator account for the
-            church system.
+            Create an administrator account for the church system.
           </Text>
         </View>
 
-        {/* ---------------------------------- */}
-        {/* Form */}
-        {/* ---------------------------------- */}
+        {/* ================================ FORM ================================ */}
 
         <View style={styles.form}>
-
-          {/* Full Name */}
-
-          <Text style={styles.label}>
-            Full Name
-          </Text>
+          <Text style={styles.label}>Full Name</Text>
 
           <TextInput
             style={styles.input}
             placeholder="Enter full name"
-            placeholderTextColor="#9ca3af"
+            placeholderTextColor={colors.textMuted}
             value={fullName}
             onChangeText={setFullName}
             autoCapitalize="words"
             autoCorrect={false}
             editable={!loading}
+            accessibilityLabel="Full name"
           />
 
-          {/* Email */}
-
-          <Text style={styles.label}>
-            Email Address
-          </Text>
+          <Text style={styles.label}>Email Address</Text>
 
           <TextInput
             style={styles.input}
             placeholder="Enter email address"
-            placeholderTextColor="#9ca3af"
+            placeholderTextColor={colors.textMuted}
             value={email}
             onChangeText={setEmail}
             autoCapitalize="none"
             autoCorrect={false}
             keyboardType="email-address"
             editable={!loading}
+            accessibilityLabel="Email address"
           />
 
-          {/* Role */}
-
-          <Text style={styles.label}>
-            Role
-          </Text>
+          <Text style={styles.label}>Role</Text>
 
           <View style={styles.rolesContainer}>
             {roles.map((item) => {
-              const selected =
-                role === item.value;
+              const selected = role === item.value;
 
               return (
                 <Pressable
                   key={item.value}
-                  onPress={() =>
-                    !loading &&
-                    setRole(item.value)
-                  }
-                  style={[
-                    styles.roleOption,
-                    selected &&
-                      styles.roleOptionSelected,
-                  ]}
+                  onPress={() => !loading && setRole(item.value)}
+                  style={[styles.roleOption, selected && styles.roleOptionSelected]}
                   disabled={loading}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected }}
+                  accessibilityLabel={item.title}
                 >
-                  {/* Radio */}
-
-                  <View
-                    style={[
-                      styles.radio,
-                      selected &&
-                        styles.radioSelected,
-                    ]}
-                  >
-                    {selected && (
-                      <View
-                        style={
-                          styles.radioInner
-                        }
-                      />
-                    )}
+                  <View style={[styles.radio, selected && styles.radioSelected]}>
+                    {selected && <View style={styles.radioInner} />}
                   </View>
 
-                  {/* Role text */}
-
-                  <View
-                    style={
-                      styles.roleContent
-                    }
-                  >
-                    <Text
-                      style={[
-                        styles.roleTitle,
-                        selected &&
-                          styles.roleTitleSelected,
-                      ]}
-                    >
+                  <View style={styles.roleContent}>
+                    <Text style={[styles.roleTitle, selected && styles.roleTitleSelected]}>
                       {item.title}
                     </Text>
 
-                    <Text
-                      style={
-                        styles.roleDescription
-                      }
-                    >
-                      {item.description}
-                    </Text>
+                    <Text style={styles.roleDescription}>{item.description}</Text>
                   </View>
                 </Pressable>
               );
             })}
           </View>
 
-          {/* -------------------------------- */}
-          {/* Password / Activation notice */}
-          {/* -------------------------------- */}
+          {/* ------------------------------ NOTICE ------------------------------ */}
 
           <View style={styles.notice}>
-            <Text style={styles.noticeTitle}>
-              Password & Activation
-            </Text>
-
+            <Text style={styles.noticeTitle}>Password & Activation</Text>
             <Text style={styles.noticeText}>
-              The user will receive an activation
-              link and will create their own password.
-              The password is never visible to the
-              Super Admin.
+              Give the user the activation code shown after registering — they enter it at
+              Activate Account to create their own password. The password is never visible to
+              you.
             </Text>
           </View>
 
-          {/* -------------------------------- */}
-          {/* Create */}
-          {/* -------------------------------- */}
+          {/* ------------------------------ CREATE ------------------------------ */}
 
           <Pressable
-            style={[
-              styles.createButton,
-              loading &&
-                styles.createButtonDisabled,
-            ]}
+            style={[styles.createButton, loading && styles.createButtonDisabled]}
             onPress={handleCreateUser}
             disabled={loading}
+            accessibilityRole="button"
+            accessibilityLabel="Create user"
+            accessibilityState={{ disabled: loading, busy: loading }}
           >
             {loading ? (
               <>
-                <ActivityIndicator
-                  color="#ffffff"
-                  size="small"
-                />
-
-                <Text
-                  style={
-                    styles.createButtonText
-                  }
-                >
-                  Creating User...
-                </Text>
+                <ActivityIndicator color={colors.surface} size="small" />
+                <Text style={styles.createButtonText}>Creating User...</Text>
               </>
             ) : (
-              <Text
-                style={
-                  styles.createButtonText
-                }
-              >
-                Create User
-              </Text>
+              <Text style={styles.createButtonText}>Create User</Text>
             )}
           </Pressable>
 
-          {/* -------------------------------- */}
-          {/* Cancel */}
-          {/* -------------------------------- */}
+          {/* ------------------------------ CANCEL ------------------------------ */}
 
           <Pressable
             style={styles.cancelButton}
             onPress={() => router.back()}
             disabled={loading}
+            accessibilityRole="button"
+            accessibilityLabel="Cancel"
           >
-            <Text
-              style={
-                styles.cancelButtonText
-              }
-            >
-              Cancel
-            </Text>
+            <Text style={styles.cancelButtonText}>Cancel</Text>
           </Pressable>
         </View>
       </ScrollView>
 
-      {/* ------------------------------------ */}
-      {/* Activation Link Popup */}
-      {/* ------------------------------------ */}
+      {/* ================================ ACTIVATION CODE POPUP ================================ */}
 
       {activationModalVisible && (
         <View style={styles.activationOverlay}>
           <View style={styles.activationModal}>
-            <Text style={styles.activationTitle}>
-              User Registered
-            </Text>
+            <Text style={styles.activationTitle}>User Registered</Text>
 
             <Text style={styles.activationMessage}>
-              The user has been registered successfully.
-              Send the activation link below to the user.
+              The user has been registered successfully. Give them the activation code below —
+              they enter it at Activate Account to create their own password.
             </Text>
 
-            <Text style={styles.activationLabel}>
-              Activation Link
+            <View style={styles.activationField}>
+              <Text style={styles.activationFieldLabel}>Administrator Name</Text>
+              <Text style={styles.activationFieldValue}>{activationAdminName}</Text>
+            </View>
+
+            <View style={styles.activationField}>
+              <Text style={styles.activationFieldLabel}>Email</Text>
+              <Text style={styles.activationFieldValue}>{activationAdminEmail}</Text>
+            </View>
+
+            <View style={styles.activationField}>
+              <Text style={styles.activationFieldLabel}>Role</Text>
+              <Text style={styles.activationFieldValue}>{activationAdminRole}</Text>
+            </View>
+
+            <Text style={styles.activationLabel}>Activation Code</Text>
+
+            <View style={styles.activationCodeContainer}>
+              <Text style={styles.activationCode} selectable>
+                {activationCode}
+              </Text>
+            </View>
+
+            <Text style={styles.activationExpiry}>
+              Expires: {formatExpiresAt(activationExpiresAt)}
             </Text>
 
             <Pressable
-              style={styles.activationLinkContainer}
+              style={styles.copyActivationButton}
               onPress={async () => {
                 try {
-                  await Clipboard.setStringAsync(
-                    activationLink
-                  );
-
-                  setLinkCopied(true);
+                  await Clipboard.setStringAsync(activationCode);
+                  setCodeCopied(true);
                 } catch (error) {
-                  console.error(
-                    'Failed to copy activation link:',
-                    error
-                  );
+                  console.error('Failed to copy activation code:', error);
                 }
               }}
+              accessibilityRole="button"
+              accessibilityLabel="Copy activation code"
             >
-              <Text
-                style={styles.activationLink}
-                selectable
-              >
-                {activationLink}
+              <Text style={styles.copyActivationButtonText}>
+                {codeCopied ? 'Copied!' : 'Copy Activation Code'}
               </Text>
             </Pressable>
-
-            {linkCopied && (
-              <Text style={styles.copiedText}>
-                ✓ Activation link copied to clipboard.
-              </Text>
-            )}
-
-            <Text style={styles.activationHint}>
-              Tap the link above to copy it automatically.
-            </Text>
 
             <Pressable
               style={styles.activationDoneButton}
               onPress={() => {
                 setActivationModalVisible(false);
-                setActivationLink('');
-                setLinkCopied(false);
+                setActivationCode('');
+                setActivationExpiresAt('');
+                setCodeCopied(false);
                 router.back();
               }}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
             >
-              <Text style={styles.activationDoneButtonText}>
-                Done
-              </Text>
+              <Text style={styles.activationDoneButtonText}>Close</Text>
             </Pressable>
           </View>
         </View>
       )}
 
-      {/* ------------------------------------ */}
-      {/* Error / Information Popup */}
-      {/* ------------------------------------ */}
+      {/* ================================ ERROR / INFO MODAL ================================ */}
 
       <AppModal
-        visible={modalVisible}
-        title={modalTitle}
-        message={modalMessage}
+        visible={modal.visible}
+        title={modal.title}
+        message={modal.message}
         buttonText="OK"
-        onClose={() => {
-          setModalVisible(false);
-
-          if (success) {
-            router.back();
-          }
-        }}
+        onClose={modal.hide}
       />
     </View>
   );
@@ -717,7 +469,7 @@ export default function AddAdminUserScreen() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: colors.background,
   },
 
   container: {
@@ -729,10 +481,6 @@ const styles = StyleSheet.create({
     paddingBottom: 60,
   },
 
-  // ----------------------------------------
-  // Header
-  // ----------------------------------------
-
   header: {
     marginBottom: 28,
   },
@@ -740,32 +488,28 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 30,
     fontWeight: '700',
-    color: '#111827',
+    color: colors.textPrimary,
   },
 
   subtitle: {
     fontSize: 14,
     lineHeight: 20,
-    color: '#6b7280',
+    color: colors.textSecondary,
     marginTop: 6,
   },
 
-  // ----------------------------------------
-  // Form
-  // ----------------------------------------
-
   form: {
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
+    backgroundColor: colors.surface,
+    borderRadius: radii.lg + 2,
     padding: 24,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: colors.border,
   },
 
   label: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#374151',
+    color: colors.textLabel,
     marginBottom: 8,
     marginTop: 18,
   },
@@ -773,17 +517,13 @@ const styles = StyleSheet.create({
   input: {
     height: 50,
     borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 9,
+    borderColor: colors.borderInput,
+    borderRadius: radii.sm,
     paddingHorizontal: 14,
     fontSize: 15,
-    color: '#111827',
-    backgroundColor: '#ffffff',
+    color: colors.textPrimary,
+    backgroundColor: colors.surface,
   },
-
-  // ----------------------------------------
-  // Roles
-  // ----------------------------------------
 
   rolesContainer: {
     gap: 10,
@@ -792,8 +532,8 @@ const styles = StyleSheet.create({
   roleOption: {
     minHeight: 68,
     borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 10,
+    borderColor: colors.borderInput,
+    borderRadius: radii.sm + 1,
     paddingHorizontal: 14,
     paddingVertical: 12,
     flexDirection: 'row',
@@ -801,8 +541,8 @@ const styles = StyleSheet.create({
   },
 
   roleOptionSelected: {
-    borderColor: '#111827',
-    backgroundColor: '#f8fafc',
+    borderColor: colors.textPrimary,
+    backgroundColor: colors.background,
   },
 
   radio: {
@@ -810,21 +550,21 @@ const styles = StyleSheet.create({
     height: 20,
     borderRadius: 10,
     borderWidth: 2,
-    borderColor: '#9ca3af',
+    borderColor: colors.textMuted,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
   },
 
   radioSelected: {
-    borderColor: '#111827',
+    borderColor: colors.textPrimary,
   },
 
   radioInner: {
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: '#111827',
+    backgroundColor: colors.textPrimary,
   },
 
   roleContent: {
@@ -834,28 +574,24 @@ const styles = StyleSheet.create({
   roleTitle: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#374151',
+    color: colors.textLabel,
   },
 
   roleTitleSelected: {
-    color: '#111827',
+    color: colors.textPrimary,
     fontWeight: '700',
   },
 
   roleDescription: {
     fontSize: 12,
     lineHeight: 17,
-    color: '#6b7280',
+    color: colors.textSecondary,
     marginTop: 3,
   },
 
-  // ----------------------------------------
-  // Notice
-  // ----------------------------------------
-
   notice: {
-    backgroundColor: '#f8fafc',
-    borderRadius: 10,
+    backgroundColor: colors.background,
+    borderRadius: radii.md,
     padding: 15,
     marginTop: 22,
   },
@@ -863,24 +599,20 @@ const styles = StyleSheet.create({
   noticeTitle: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#374151',
+    color: colors.textLabel,
   },
 
   noticeText: {
     fontSize: 13,
     lineHeight: 19,
-    color: '#6b7280',
+    color: colors.textSecondary,
     marginTop: 5,
   },
 
-  // ----------------------------------------
-  // Create button
-  // ----------------------------------------
-
   createButton: {
     minHeight: 52,
-    backgroundColor: '#111827',
-    borderRadius: 9,
+    backgroundColor: colors.textPrimary,
+    borderRadius: radii.sm,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
@@ -893,14 +625,10 @@ const styles = StyleSheet.create({
   },
 
   createButtonText: {
-    color: '#ffffff',
+    color: colors.surface,
     fontSize: 15,
     fontWeight: '600',
   },
-
-  // ----------------------------------------
-  // Cancel
-  // ----------------------------------------
 
   cancelButton: {
     paddingVertical: 14,
@@ -909,13 +637,9 @@ const styles = StyleSheet.create({
   },
 
   cancelButtonText: {
-    color: '#6b7280',
+    color: colors.textSecondary,
     fontSize: 15,
   },
-
-  // ----------------------------------------
-  // Activation Link Popup
-  // ----------------------------------------
 
   activationOverlay: {
     position: 'absolute',
@@ -933,81 +657,101 @@ const styles = StyleSheet.create({
   activationModal: {
     width: '100%',
     maxWidth: 520,
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
+    backgroundColor: colors.surface,
+    borderRadius: radii.lg + 2,
     padding: 24,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: colors.border,
   },
 
   activationTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#111827',
+    color: colors.textPrimary,
   },
 
   activationMessage: {
     fontSize: 14,
     lineHeight: 20,
-    color: '#6b7280',
+    color: colors.textSecondary,
     marginTop: 8,
+  },
+
+  activationField: {
+    marginTop: 14,
+  },
+
+  activationFieldLabel: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginBottom: 3,
+  },
+
+  activationFieldValue: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.textLabel,
   },
 
   activationLabel: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#374151',
+    color: colors.textLabel,
     marginTop: 20,
     marginBottom: 8,
   },
 
-  activationLinkContainer: {
+  activationCodeContainer: {
     borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 9,
-    backgroundColor: '#f8fafc',
-    padding: 12,
+    borderColor: colors.borderInput,
+    borderRadius: radii.sm,
+    backgroundColor: colors.background,
+    padding: 14,
+    alignItems: 'center',
   },
 
-  activationLink: {
-    fontSize: 13,
-    lineHeight: 19,
-    color: '#2563eb',
-    textDecorationLine: 'underline',
+  activationCode: {
+    fontSize: 20,
+    fontWeight: '700',
+    letterSpacing: 2,
+    color: colors.textPrimary,
   },
 
-  copiedText: {
+  activationExpiry: {
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: 8,
+  },
+
+  copyActivationButton: {
+    height: 46,
+    borderRadius: 8,
+    backgroundColor: colors.textPrimary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 14,
+  },
+
+  copyActivationButtonText: {
+    color: colors.surface,
     fontSize: 13,
     fontWeight: '600',
-    color: '#15803d',
-    marginTop: 10,
-  },
-
-  activationHint: {
-    fontSize: 12,
-    lineHeight: 18,
-    color: '#9ca3af',
-    marginTop: 8,
   },
 
   activationDoneButton: {
     height: 48,
-    backgroundColor: '#111827',
-    borderRadius: 9,
+    backgroundColor: colors.textPrimary,
+    borderRadius: radii.sm,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 20,
   },
 
   activationDoneButtonText: {
-    color: '#ffffff',
+    color: colors.surface,
     fontSize: 14,
     fontWeight: '600',
   },
-
-  // ----------------------------------------
-  // Access denied
-  // ----------------------------------------
 
   center: {
     flex: 1,
@@ -1019,18 +763,18 @@ const styles = StyleSheet.create({
   deniedTitle: {
     fontSize: 24,
     fontWeight: '700',
-    color: '#111827',
+    color: colors.textPrimary,
   },
 
   deniedText: {
     fontSize: 14,
-    color: '#6b7280',
+    color: colors.textSecondary,
     textAlign: 'center',
     marginTop: 8,
   },
 
   backButton: {
-    backgroundColor: '#111827',
+    backgroundColor: colors.textPrimary,
     paddingHorizontal: 18,
     paddingVertical: 11,
     borderRadius: 8,
@@ -1038,7 +782,7 @@ const styles = StyleSheet.create({
   },
 
   backButtonText: {
-    color: '#ffffff',
+    color: colors.surface,
     fontSize: 14,
     fontWeight: '600',
   },

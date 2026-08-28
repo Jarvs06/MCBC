@@ -1,408 +1,228 @@
 import { Link } from 'expo-router';
-import {
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { StatusBar } from 'expo-status-bar';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { ChurchHighlights } from '@/components/ChurchHighlights';
+import { colors, radii } from '@/constants/theme';
 import { useAuth } from '@/contexts/AuthContext';
 
 export default function HomeScreen() {
-  const {
-    session,
-    profile,
-    loading: authLoading,
-  } = useAuth();
+  const { session, profile, loading: authLoading } = useAuth();
+  const insets = useSafeAreaInsets();
 
   const isLoggedIn = !!session && !!profile;
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={styles.content}
-    >
-      {/* Header */}
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.churchName}>
-            Church Name
-          </Text>
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      {/* Dark hero needs light status bar icons for contrast; reverts
+          automatically when this screen unmounts. */}
+      <StatusBar style="light" />
 
-          <Text style={styles.churchSubtitle}>
-            Church Information Portal
-          </Text>
-        </View>
+      {/* ================================ HERO ================================ */}
 
-        {/* Authentication Button */}
-        {!authLoading && (
-          <>
-            {isLoggedIn ? (
-              <Link
-                href="./dashboard"
-                asChild
+      <View style={[styles.hero, { paddingTop: insets.top + 20 }]}>
+        <View style={styles.heroTopRow}>
+          <View style={styles.brandBadge}>
+            <Text style={styles.brandBadgeIcon}>⛪</Text>
+          </View>
+
+          {!authLoading && (
+            <Link href={isLoggedIn ? './dashboard' : '/login'} asChild>
+              <Pressable
+                style={styles.heroCta}
+                accessibilityRole="button"
+                accessibilityLabel={isLoggedIn ? 'Go to dashboard' : 'Admin login'}
               >
-                <Pressable style={styles.loginButton}>
-                  <Text style={styles.loginButtonText}>
-                    Dashboard
-                  </Text>
-                </Pressable>
-              </Link>
-            ) : (
-              <Link
-                href="/login"
-                asChild
-              >
-                <Pressable style={styles.loginButton}>
-                  <Text style={styles.loginButtonText}>
-                    Admin Login
-                  </Text>
-                </Pressable>
-              </Link>
-            )}
-          </>
-        )}
-      </View>
-
-      {/* Welcome */}
-      <View style={styles.welcome}>
-        <Text style={styles.welcomeTitle}>
-          Welcome to our Church
-        </Text>
-
-        <Text style={styles.welcomeText}>
-          Stay updated with announcements, upcoming
-          activities, birthdays, anniversaries, and
-          church services.
-        </Text>
-      </View>
-
-      {/* Announcements */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>
-          📢 Announcements
-        </Text>
-
-        <View style={styles.card}>
-          <Text style={styles.cardDate}>
-            August 30, 2026
-          </Text>
-
-          <Text style={styles.cardTitle}>
-            Sunday Worship Service
-          </Text>
-
-          <Text style={styles.cardText}>
-            Join us this Sunday for our worship service
-            at 9:00 AM.
-          </Text>
+                <Text style={styles.heroCtaText}>{isLoggedIn ? 'Dashboard' : 'Admin Login'}</Text>
+              </Pressable>
+            </Link>
+          )}
         </View>
+
+        <Text style={styles.heroEyebrow}>Church Name</Text>
+        <Text style={styles.heroTitle}>Welcome to our Church</Text>
+
+        <Text style={styles.heroSubtitle}>
+          Stay updated with announcements and upcoming church activities and events.
+        </Text>
       </View>
 
-      {/* Birthdays */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>
-          🎂 Birthdays This Week
-        </Text>
-
-        <View style={styles.card}>
-          <View style={styles.personRow}>
-            <View>
-              <Text style={styles.personName}>
-                Maria Santos
-              </Text>
-
-              <Text style={styles.cardText}>
-                August 27
-              </Text>
-            </View>
-          </View>
-
-          <View style={styles.divider} />
-
-          <View style={styles.personRow}>
-            <View>
-              <Text style={styles.personName}>
-                John Cruz
-              </Text>
-
-              <Text style={styles.cardText}>
-                August 29
-              </Text>
-            </View>
-          </View>
-        </View>
-      </View>
-
-      {/* Wedding Anniversaries */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>
-          💍 Wedding Anniversaries
-        </Text>
-
-        <View style={styles.card}>
-          <View style={styles.personRow}>
-            <View>
-              <Text style={styles.personName}>
-                Juan & Maria Cruz
-              </Text>
-
-              <Text style={styles.cardText}>
-                August 28
-              </Text>
-            </View>
-          </View>
-        </View>
-      </View>
-
-      {/* Flowers */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>
-          🌸 Flowers — This Sunday
-        </Text>
-
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>
-            Sponsored by
-          </Text>
-
-          <Text style={styles.cardTitle}>
-            Santos Family
-          </Text>
-
-          <Text style={styles.cardText}>
-            In celebration of God's blessings.
-          </Text>
-        </View>
-      </View>
-
-      {/* Midweek Service */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>
-          🎤 Midweek Service
-        </Text>
-
-        <View style={styles.card}>
-          <Text style={styles.cardDate}>
-            Wednesday, September 2
-          </Text>
-
-          <Text style={styles.cardTitle}>
-            Midweek Service
-          </Text>
-
-          <View style={styles.serviceRow}>
-            <Text style={styles.cardLabel}>
-              Speaker
-            </Text>
-
-            <Text style={styles.serviceValue}>
-              Pastor John
-            </Text>
-          </View>
-
-          <View style={styles.serviceRow}>
-            <Text style={styles.cardLabel}>
-              Presider
-            </Text>
-
-            <Text style={styles.serviceValue}>
-              Brother Mark
-            </Text>
-          </View>
-        </View>
-      </View>
-
-      {/* Upcoming Events */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>
-          📅 Upcoming Events
-        </Text>
-
-        <View style={styles.card}>
-          <Text style={styles.cardDate}>
-            September 5, 2026
-          </Text>
-
-          <Text style={styles.cardTitle}>
-            Youth Fellowship
-          </Text>
-
-          <Text style={styles.cardText}>
-            Join us for our upcoming youth fellowship.
-          </Text>
-        </View>
-      </View>
-
-      {/* Footer */}
-      <View style={styles.footer}>
-        <Text style={styles.footerText}>
-          Church Information Portal
-        </Text>
-
-        <Text style={styles.footerSubtext}>
-          For church members and visitors
-        </Text>
+      <View style={styles.body}>
+        <ChurchHighlights variant="public" />
       </View>
     </ScrollView>
+  );
+}
+
+/*
+ * ==========================================
+ * GLANCE STAT
+ * ==========================================
+ */
+
+function GlanceStat({ icon, value, label }: { icon: string; value: number; label: string }) {
+  return (
+    <View style={styles.glanceStat}>
+      <Text style={styles.glanceIcon}>{icon}</Text>
+      <Text style={styles.glanceValue}>{value}</Text>
+      <Text style={styles.glanceLabel}>
+        {label}
+        {value === 1 ? '' : 's'}
+      </Text>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: colors.background,
   },
 
   content: {
-    paddingHorizontal: 20,
-    paddingTop: 20,
     paddingBottom: 50,
   },
 
-  header: {
+  // Hero
+
+  hero: {
+    backgroundColor: colors.textPrimary,
+    paddingHorizontal: 20,
+    paddingTop: 30,
+    paddingBottom: 46,
+    borderBottomLeftRadius: radii.lg + 10,
+    borderBottomRightRadius: radii.lg + 10,
+  },
+
+  heroTopRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingTop: 30,
-    paddingBottom: 25,
-    gap: 15,
-  },
-
-  churchName: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#111827',
-  },
-
-  churchSubtitle: {
-    fontSize: 13,
-    color: '#6b7280',
-    marginTop: 3,
-  },
-
-  loginButton: {
-    backgroundColor: '#111827',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
-  },
-
-  loginButtonText: {
-    color: '#ffffff',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-
-  welcome: {
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    padding: 22,
-    marginBottom: 25,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-
-  welcomeTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#111827',
-  },
-
-  welcomeText: {
-    fontSize: 15,
-    lineHeight: 22,
-    color: '#6b7280',
-    marginTop: 8,
-  },
-
-  section: {
     marginBottom: 22,
   },
 
-  sectionTitle: {
-    fontSize: 19,
-    fontWeight: '700',
-    color: '#111827',
-    marginBottom: 10,
+  brandBadge: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 
-  card: {
-    backgroundColor: '#ffffff',
-    borderRadius: 14,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
+  brandBadgeIcon: {
+    fontSize: 18,
   },
 
-  cardDate: {
+  heroCta: {
+    backgroundColor: colors.surface,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: radii.pill,
+  },
+
+  heroCtaText: {
+    color: colors.textPrimary,
     fontSize: 13,
-    fontWeight: '600',
-    color: '#6b7280',
-    marginBottom: 5,
-  },
-
-  cardTitle: {
-    fontSize: 17,
     fontWeight: '700',
-    color: '#111827',
   },
 
-  cardText: {
-    fontSize: 14,
-    lineHeight: 21,
-    color: '#6b7280',
-    marginTop: 5,
+  heroEyebrow: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+    color: 'rgba(255, 255, 255, 0.55)',
+    marginBottom: 8,
   },
 
-  cardLabel: {
-    fontSize: 13,
-    color: '#6b7280',
+  heroTitle: {
+    fontSize: 32,
+    fontWeight: '800',
+    color: colors.surface,
+    lineHeight: 38,
+  },
+
+  heroSubtitle: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: 'rgba(255, 255, 255, 0.75)',
+    marginTop: 10,
+    maxWidth: 480,
+  },
+
+  // At a glance (floats over the hero's bottom edge)
+
+  glanceCard: {
+    flexDirection: 'row',
+    backgroundColor: colors.surface,
+    borderRadius: radii.lg,
+    marginHorizontal: 20,
+    marginTop: -28,
+    paddingVertical: 16,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.12,
+    shadowRadius: 18,
+    elevation: 6,
+  },
+
+  glanceStat: {
+    flex: 1,
+    alignItems: 'center',
+  },
+
+  glanceDivider: {
+    width: 1,
+    backgroundColor: colors.border,
+  },
+
+  glanceIcon: {
+    fontSize: 18,
     marginBottom: 4,
   },
 
-  personRow: {
-    paddingVertical: 3,
+  glanceValue: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: colors.textPrimary,
   },
 
-  personName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
+  glanceLabel: {
+    fontSize: 11,
+    color: colors.textSecondary,
+    marginTop: 2,
   },
 
-  divider: {
-    height: 1,
-    backgroundColor: '#e5e7eb',
-    marginVertical: 12,
-  },
+  // Body
 
-  serviceRow: {
-    marginTop: 16,
-  },
-
-  serviceValue: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-    marginTop: 3,
+  body: {
+    paddingHorizontal: 20,
+    paddingTop: 34,
   },
 
   footer: {
     alignItems: 'center',
     paddingTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+
+  footerIcon: {
+    fontSize: 20,
+    marginBottom: 6,
   },
 
   footerText: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#6b7280',
+    fontWeight: '700',
+    color: colors.textPrimary,
   },
 
   footerSubtext: {
     fontSize: 12,
-    color: '#9ca3af',
+    color: colors.textMuted,
     marginTop: 4,
   },
 });

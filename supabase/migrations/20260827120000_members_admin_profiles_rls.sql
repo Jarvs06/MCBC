@@ -1,0 +1,89 @@
+-- ============================================================
+-- Tighten members + admin_profiles RLS to match the app's
+-- actual write paths
+-- ============================================================
+--
+-- SUPERSEDES an earlier draft of this same file, which was
+-- written before we had visibility into the live database. A
+-- pg_policies dump of the real project showed these already
+-- exist, built on is_super_admin() / is_active_admin() helper
+-- functions, and are NOT touched by this migration:
+--
+--   admin_profiles  select  "Users can view their own admin profile"
+--   admin_profiles  select  "Active admins can view admin profiles"
+--   members         select  "Active admins can view members"
+--   members         insert  "Super Admin can add members"
+--   members         update  "Super Admin can update members"
+--
+-- Those match how the app actually reads/writes these tables
+-- directly from the client, so they're left alone.
+--
+-- This migration removes three EXISTING policies that let an
+-- authenticated Super Admin bypass safety rules the corresponding
+-- Edge Function enforces. In every case, removing the client-side
+-- policy does not break the app, because the Edge Function
+-- already does the write using the service-role key, which
+-- bypasses RLS regardless of any policy on these tables.
+--
+-- 1. members / "Super Admin can delete members" (delete)
+--
+--    supabase/functions/delete-member first clears the target
+--    member's spouse_id back-reference, deletes the row, and
+--    rolls back the spouse-clear if the delete fails. A direct
+--    client DELETE (which this policy currently permits) skips
+--    all of that and can leave another member's spouse_id
+--    pointing at a row that no longer exists.
+--
+-- 2. admin_profiles / "Super Admin can update admin profiles" (update)
+--
+--    supabase/functions/update-admin-profile only ever writes
+--    full_name + role, never status/approved, and separately
+--    refuses to let a Super Admin change their own role. This
+--    policy has no such restriction — a direct client UPDATE can
+--    set status/approved directly (skipping the invite/activation
+--    flow entirely) or change one's own role (the one thing the
+--    Edge Function explicitly blocks).
+--
+-- 3. admin_profiles / "Super Admin can delete admin profiles" (delete)
+--
+--    supabase/functions/delete-admin-user refuses to delete your
+--    own account or another Super Admin's, and also deletes the
+--    matching auth.users row via the admin API. This policy has
+--    neither protection, and a direct client DELETE would remove
+--    the profile while leaving an orphaned auth.users row (only
+--    the Edge Function calls auth.admin.deleteUser()).
+--
+-- After this migration, admin_profiles has no insert/update/delete
+-- policy left for `authenticated` — every write to that table
+-- already goes through an Edge Function, so this just makes RLS
+-- match that reality instead of independently granting a wider
+-- path alongside it.
+--
+-- NOT changed here, flagged for your awareness / a follow-up
+-- decision:
+--
+-- - "Super Admin can insert admin profiles" is left in place.
+--   admin_profiles.id is a foreign key to auth.users, and this
+--   app has no public signup, so a direct insert needs an
+--   existing auth user id — real but limited exploitability. It
+--   does let a Super Admin insert a profile with any role
+--   directly, bypassing create-admin-user's "every new admin
+--   starts as Viewer" rule. Uncomment the drop below if you want
+--   this to only ever happen through that function too.
+--
+-- - "Active admins can view admin profiles" lets both Viewer and
+--   Super Admin read every admin's full_name/role/status/approved,
+--   even though the admin-users list screen in the app is only
+--   reachable by Super Admin. No member PII or credentials are
+--   exposed by this, so it's low severity — just confirm it's
+--   intentional that Viewers can see the full admin roster.
+-- ============================================================
+
+drop policy if exists "Super Admin can delete members" on public.members;
+
+drop policy if exists "Super Admin can update admin profiles" on public.admin_profiles;
+
+drop policy if exists "Super Admin can delete admin profiles" on public.admin_profiles;
+
+-- Optional, not applied by default — see note above:
+-- drop policy if exists "Super Admin can insert admin profiles" on public.admin_profiles;

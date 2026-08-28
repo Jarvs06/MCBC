@@ -11,78 +11,49 @@ import {
 } from 'react-native';
 
 import AppModal from '@/components/AppModal';
+import { colors, radii } from '@/constants/theme';
 import { useAuth } from '@/contexts/AuthContext';
+import { useAppModal } from '@/hooks/useAppModal';
 import { supabase } from '@/lib/supabase';
+import { isValidEmail } from '@/lib/validators';
 
 export default function LoginScreen() {
-  const {
-    loading: authLoading,
-  } = useAuth();
+  const { loading: authLoading } = useAuth();
 
   // ----------------------------------------
   // Form
   // ----------------------------------------
 
   const [email, setEmail] = useState('');
-  const [password, setPassword] =
-    useState('');
+  const [password, setPassword] = useState('');
 
   // ----------------------------------------
   // Login loading
   // ----------------------------------------
 
-  const [loading, setLoading] =
-    useState(false);
+  const [loading, setLoading] = useState(false);
 
   // ----------------------------------------
   // Modal
   // ----------------------------------------
 
-  const [modalVisible, setModalVisible] =
-    useState(false);
-
-  const [modalTitle, setModalTitle] =
-    useState('');
-
-  const [modalMessage, setModalMessage] =
-    useState('');
-
-  // ----------------------------------------
-  // Modal helper
-  // ----------------------------------------
-
-  function showModal(
-    title: string,
-    message: string
-  ) {
-    setModalTitle(title);
-    setModalMessage(message);
-    setModalVisible(true);
-  }
+  const modal = useAppModal();
 
   // ----------------------------------------
   // Authentication initialization
   // ----------------------------------------
 
   /*
-   * Wait for AuthContext to finish restoring
-   * the existing Supabase session.
+   * Wait for AuthContext to finish restoring the existing
+   * Supabase session.
    *
-   * IMPORTANT:
-   *
-   * We do NOT redirect here.
-   *
-   * The root authentication layout is now
-   * responsible for protecting authenticated
-   * routes.
+   * IMPORTANT: we do NOT redirect here. The root authentication
+   * layout is responsible for protecting authenticated routes.
    */
-
   if (authLoading) {
     return (
       <View style={styles.loadingScreen}>
-        <Text style={styles.loadingText}>
-          Checking your session...
-        </Text>
+        <Text style={styles.loadingText}>Checking your session...</Text>
       </View>
     );
   }
@@ -92,136 +63,57 @@ export default function LoginScreen() {
   // ----------------------------------------
 
   async function handleLogin() {
-    // Prevent duplicate submissions.
     if (loading) {
       return;
     }
 
-    const trimmedEmail =
-      email.trim().toLowerCase();
+    const trimmedEmail = email.trim().toLowerCase();
 
-    // --------------------------------------
-    // Validate email/password
-    // --------------------------------------
-
-    if (
-      !trimmedEmail ||
-      !password
-    ) {
-      showModal(
-        'Missing Information',
-        'Please enter your email and password.'
-      );
-
+    if (!trimmedEmail || !password) {
+      modal.show('Missing Information', 'Please enter your email and password.');
       return;
     }
 
-    // --------------------------------------
-    // Basic email validation
-    // --------------------------------------
-
-    const emailRegex =
-      /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-    if (!emailRegex.test(trimmedEmail)) {
-      showModal(
-        'Invalid Email',
-        'Please enter a valid email address.'
-      );
-
+    if (!isValidEmail(trimmedEmail)) {
+      modal.show('Invalid Email', 'Please enter a valid email address.');
       return;
     }
 
     try {
       setLoading(true);
 
-      console.log(
-        '[LOGIN] Attempting login:',
-        trimmedEmail
-      );
-
-      // --------------------------------------
-      // Supabase login
-      // --------------------------------------
-
-      const {
-        data,
-        error,
-      } =
-        await supabase.auth.signInWithPassword({
-          email: trimmedEmail,
-          password,
-        });
-
-      // --------------------------------------
-      // Supabase error
-      // --------------------------------------
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: trimmedEmail,
+        password,
+      });
 
       if (error) {
-        console.error(
-          '[LOGIN] Login error:',
-          error
-        );
-
-        showModal(
-          'Login Failed',
-          error.message
-        );
-
+        console.error('[LOGIN] Login error:', error);
+        modal.show('Login Failed', error.message);
         return;
       }
 
-      // --------------------------------------
-      // Verify session
-      // --------------------------------------
-
-      if (
-        !data.session ||
-        !data.user
-      ) {
-        console.error(
-          '[LOGIN] No session returned.'
-        );
-
-        showModal(
+      if (!data.session || !data.user) {
+        console.error('[LOGIN] No session returned.');
+        modal.show(
           'Login Failed',
           'We could not establish your session. Please try again.'
         );
-
         return;
       }
 
-      console.log(
-        '[LOGIN] Login successful:',
-        data.user.email
-      );
+      console.log('[LOGIN] Login successful.');
 
-      // --------------------------------------
-      // Navigate to dashboard
-      // --------------------------------------
-      //
-      // This is the ONLY place this login
-      // screen navigates to /dashboard.
-      //
-      // It happens only after the user has
-      // explicitly submitted valid credentials.
-      //
-      // AuthContext will receive SIGNED_IN
-      // and load the administrator profile.
-      //
-
+      /*
+       * This is the ONLY place this login screen navigates to
+       * /dashboard. It happens only after the user has explicitly
+       * submitted valid credentials. AuthContext will receive
+       * SIGNED_IN and load the administrator profile.
+       */
       router.replace('/dashboard');
-
     } catch (error) {
-      console.error(
-        '[LOGIN] Unexpected login error:',
-        error
-      );
-
-      showModal(
-        'Login Error',
-        'Something went wrong while signing in. Please try again.'
-      );
+      console.error('[LOGIN] Unexpected login error:', error);
+      modal.show('Login Error', 'Something went wrong while signing in. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -236,10 +128,7 @@ export default function LoginScreen() {
       return;
     }
 
-    showModal(
-      'Forgot Password',
-      'Password recovery will be available in a later phase.'
-    );
+    modal.show('Forgot Password', 'Password recovery will be available in a later phase.');
   }
 
   // ----------------------------------------
@@ -250,38 +139,22 @@ export default function LoginScreen() {
     <View style={styles.screen}>
       <KeyboardAvoidingView
         style={styles.container}
-        behavior={
-          Platform.OS === 'ios'
-            ? 'padding'
-            : undefined
-        }
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <View style={styles.content}>
+          {/* ================================ HEADER ================================ */}
 
-          {/* ==================================
-              HEADER
-          ================================== */}
+          <Text style={styles.title}>Church Admin</Text>
+          <Text style={styles.subtitle}>Sign in to manage church information</Text>
 
-          <Text style={styles.title}>
-            Church Admin
-          </Text>
+          {/* ================================ EMAIL ================================ */}
 
-          <Text style={styles.subtitle}>
-            Sign in to manage church information
-          </Text>
-
-          {/* ==================================
-              EMAIL
-          ================================== */}
-
-          <Text style={styles.label}>
-            Email
-          </Text>
+          <Text style={styles.label}>Email</Text>
 
           <TextInput
             style={styles.input}
             placeholder="admin@example.com"
-            placeholderTextColor="#999"
+            placeholderTextColor={colors.textMuted}
             value={email}
             onChangeText={setEmail}
             autoCapitalize="none"
@@ -289,20 +162,17 @@ export default function LoginScreen() {
             keyboardType="email-address"
             editable={!loading}
             returnKeyType="next"
+            accessibilityLabel="Email address"
           />
 
-          {/* ==================================
-              PASSWORD
-          ================================== */}
+          {/* ================================ PASSWORD ================================ */}
 
-          <Text style={styles.label}>
-            Password
-          </Text>
+          <Text style={styles.label}>Password</Text>
 
           <TextInput
             style={styles.input}
             placeholder="Password"
-            placeholderTextColor="#999"
+            placeholderTextColor={colors.textMuted}
             value={password}
             onChangeText={setPassword}
             secureTextEntry
@@ -311,60 +181,58 @@ export default function LoginScreen() {
             editable={!loading}
             returnKeyType="done"
             onSubmitEditing={handleLogin}
+            accessibilityLabel="Password"
           />
 
-          {/* ==================================
-              LOGIN BUTTON
-          ================================== */}
+          {/* ================================ LOGIN BUTTON ================================ */}
 
           <Pressable
-            style={[
-              styles.button,
-              loading &&
-                styles.buttonDisabled,
-            ]}
+            style={[styles.button, loading && styles.buttonDisabled]}
             onPress={handleLogin}
             disabled={loading}
+            accessibilityRole="button"
+            accessibilityLabel="Sign in"
+            accessibilityState={{ disabled: loading, busy: loading }}
           >
-            <Text style={styles.buttonText}>
-              {loading
-                ? 'Signing in...'
-                : 'Sign In'}
-            </Text>
+            <Text style={styles.buttonText}>{loading ? 'Signing in...' : 'Sign In'}</Text>
           </Pressable>
 
-          {/* ==================================
-              FORGOT PASSWORD
-          ================================== */}
+          {/* ================================ FORGOT PASSWORD ================================ */}
 
           <View style={styles.forgotRow}>
             <Pressable
               disabled={loading}
-              onPress={
-                handleForgotPassword
-              }
+              onPress={handleForgotPassword}
+              accessibilityRole="button"
+              accessibilityLabel="Forgot password"
             >
-              <Text style={styles.link}>
-                Forgot Password?
-              </Text>
+              <Text style={styles.link}>Forgot Password?</Text>
             </Pressable>
           </View>
 
+          {/* ================================ ACTIVATE ACCOUNT ================================ */}
+
+          <View style={styles.forgotRow}>
+            <Pressable
+              disabled={loading}
+              onPress={() => router.push('/activate')}
+              accessibilityRole="button"
+              accessibilityLabel="Activate account"
+            >
+              <Text style={styles.link}>Have an activation code? Activate Account</Text>
+            </Pressable>
+          </View>
         </View>
       </KeyboardAvoidingView>
 
-      {/* ======================================
-          MODAL
-      ====================================== */}
+      {/* ================================ MODAL ================================ */}
 
       <AppModal
-        visible={modalVisible}
-        title={modalTitle}
-        message={modalMessage}
+        visible={modal.visible}
+        title={modal.title}
+        message={modal.message}
         buttonText="OK"
-        onClose={() =>
-          setModalVisible(false)
-        }
+        onClose={modal.hide}
       />
     </View>
   );
@@ -377,7 +245,7 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.background,
   },
 
   container: {
@@ -390,60 +258,52 @@ const styles = StyleSheet.create({
     paddingHorizontal: 28,
   },
 
-  // ----------------------------------------
   // Header
-  // ----------------------------------------
 
   title: {
     fontSize: 32,
     fontWeight: '700',
     textAlign: 'center',
-    color: '#111827',
+    color: colors.textPrimary,
   },
 
   subtitle: {
     fontSize: 15,
     textAlign: 'center',
-    color: '#6b7280',
+    color: colors.textSecondary,
     marginTop: 8,
     marginBottom: 36,
   },
 
-  // ----------------------------------------
   // Labels
-  // ----------------------------------------
 
   label: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#374151',
+    color: colors.textLabel,
     marginBottom: 8,
   },
 
-  // ----------------------------------------
   // Inputs
-  // ----------------------------------------
 
   input: {
     height: 52,
     borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 10,
+    borderColor: colors.borderInput,
+    borderRadius: radii.md,
     paddingHorizontal: 16,
     fontSize: 16,
     marginBottom: 18,
-    color: '#111827',
-    backgroundColor: '#ffffff',
+    color: colors.textPrimary,
+    backgroundColor: colors.surface,
   },
 
-  // ----------------------------------------
   // Login button
-  // ----------------------------------------
 
   button: {
     height: 52,
-    backgroundColor: '#111827',
-    borderRadius: 10,
+    backgroundColor: colors.textPrimary,
+    borderRadius: radii.md,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 8,
@@ -454,14 +314,12 @@ const styles = StyleSheet.create({
   },
 
   buttonText: {
-    color: '#ffffff',
+    color: colors.surface,
     fontSize: 16,
     fontWeight: '600',
   },
 
-  // ----------------------------------------
   // Forgot password
-  // ----------------------------------------
 
   forgotRow: {
     alignItems: 'center',
@@ -469,24 +327,22 @@ const styles = StyleSheet.create({
   },
 
   link: {
-    color: '#2563eb',
+    color: colors.accent,
     fontWeight: '600',
     fontSize: 14,
   },
 
-  // ----------------------------------------
   // Loading
-  // ----------------------------------------
 
   loadingScreen: {
     flex: 1,
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.background,
     justifyContent: 'center',
     alignItems: 'center',
   },
 
   loadingText: {
     fontSize: 15,
-    color: '#6b7280',
+    color: colors.textSecondary,
   },
 });

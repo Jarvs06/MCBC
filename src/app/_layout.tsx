@@ -1,12 +1,12 @@
 import {
   Stack,
-  usePathname,
-  useRouter,
 } from 'expo-router';
 
+import { StatusBar } from 'expo-status-bar';
+
 import {
-  useEffect,
-} from 'react';
+  SafeAreaProvider,
+} from 'react-native-safe-area-context';
 
 import {
   AuthProvider,
@@ -15,9 +15,13 @@ import {
 
 export default function RootLayout() {
   return (
-    <AuthProvider>
-      <RootNavigator />
-    </AuthProvider>
+    <SafeAreaProvider>
+      <StatusBar style="auto" />
+
+      <AuthProvider>
+        <RootNavigator />
+      </AuthProvider>
+    </SafeAreaProvider>
   );
 }
 
@@ -27,12 +31,6 @@ function RootNavigator() {
     loading,
     profile,
   } = useAuth();
-
-  const pathname =
-    usePathname();
-
-  const router =
-    useRouter();
 
   /*
    * ========================================
@@ -61,7 +59,6 @@ function RootNavigator() {
   console.log(
     '[ROOT NAV]',
     {
-      pathname,
       hasSession:
         !!session,
       profileStatus:
@@ -73,55 +70,6 @@ function RootNavigator() {
       isActive,
     }
   );
-
-  /*
-   * ========================================
-   * PREVENT ACTIVE USERS FROM /invite
-   * ========================================
-   *
-   * IMPORTANT:
-   *
-   * This useEffect MUST be placed BEFORE
-   * the "if (loading) return null" block.
-   *
-   * React hooks must always be called in
-   * the same order on every render.
-   */
-
-  useEffect(() => {
-    /*
-     * Wait until authentication has finished
-     * initializing.
-     */
-
-    if (loading) {
-      return;
-    }
-
-    /*
-     * If an already-active administrator
-     * somehow reaches /invite, send them
-     * to the dashboard.
-     */
-
-    if (
-      isActive &&
-      pathname === '/invite'
-    ) {
-      console.log(
-        '[ROOT NAV] Active account is on /invite. Redirecting to /dashboard.'
-      );
-
-      router.replace(
-        '/dashboard'
-      );
-    }
-  }, [
-    loading,
-    isActive,
-    pathname,
-    router,
-  ]);
 
   /*
    * ========================================
@@ -147,6 +95,17 @@ function RootNavigator() {
     >
       {/* ======================================
           PUBLIC / NORMAL AUTH ROUTES
+      ======================================
+
+          "activate" (Activate Account) lives here alongside
+          index/login rather than as its own always-visible
+          screen: unlike the old magic-link /invite flow, this
+          screen never has a Supabase session mid-flow (there is
+          no session at all until supabase.auth.signInWithPassword
+          succeeds at the very end), so there's no "authenticated
+          but not yet Active" state to special-case — the same
+          !isActive guard that hides /login from an active admin
+          already hides /activate too.
       ====================================== */}
 
       <Stack.Protected
@@ -159,35 +118,11 @@ function RootNavigator() {
         <Stack.Screen
           name="login"
         />
+
+        <Stack.Screen
+          name="activate"
+        />
       </Stack.Protected>
-
-      {/* ======================================
-          INVITATION ROUTE
-      ======================================
-
-          This route is intentionally available
-          for invited users.
-
-          Invitation flow:
-
-          Email
-            ↓
-          /invite
-            ↓
-          Create Password
-            ↓
-          Activate Account
-            ↓
-          /dashboard
-
-          Once the account becomes Active,
-          the useEffect above prevents the
-          user from returning to /invite.
-      ====================================== */}
-
-      <Stack.Screen
-        name="invite"
-      />
 
       {/* ======================================
           ACTIVE APPLICATION

@@ -13,6 +13,7 @@
     },
 
     "android": {
+      "package": "com.mcbc.churchadmin",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -44,6 +45,13 @@
       "typedRoutes": true,
       "reactCompiler": true,
       "baseUrl": "/MCBC"
+    },
+
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "1562fc0b-c510-411b-9c5d-1899a7f050af"
+      }
     }
   }
 }

@@ -195,13 +195,11 @@ async function decryptMember(data: Record<string, unknown>, key: CryptoKey) {
  */
 
 async function encryptMembers(data: Record<string, unknown>[], key: CryptoKey) {
-  const result = [];
-
-  for (const member of data) {
-    result.push(await encryptMember(member, key));
-  }
-
-  return result;
+  /*
+   * Each member's encryption is independent, so run them concurrently
+   * instead of awaiting one at a time.
+   */
+  return Promise.all(data.map((member) => encryptMember(member, key)));
 }
 
 /*
@@ -211,13 +209,13 @@ async function encryptMembers(data: Record<string, unknown>[], key: CryptoKey) {
  */
 
 async function decryptMembers(data: Record<string, unknown>[], key: CryptoKey) {
-  const result = [];
-
-  for (const member of data) {
-    result.push(await decryptMember(member, key));
-  }
-
-  return result;
+  /*
+   * Each member's decryption is independent, so run them concurrently
+   * instead of awaiting one at a time. For a batch of N members this
+   * turns roughly N sequential round trips through the crypto engine
+   * into a single concurrent batch.
+   */
+  return Promise.all(data.map((member) => decryptMember(member, key)));
 }
 
 /*

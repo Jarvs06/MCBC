@@ -7,6 +7,13 @@ name: Deploy Public Site to GitHub Pages
 # repo root) can never end up in what's built and published here.
 # See public-site/src/constants/theme.ts for why its components
 # are plain copies instead of importing from the main app.
+#
+# Pages "Source" must be set to "GitHub Actions" in repo Settings
+# → Pages, not "Deploy from a branch" — the branch-based mode has
+# its own auto-deployer that fires on every push to main and will
+# overwrite this workflow's output with nothing (there's no static
+# index.html at the repo root, real content lives inside public-site/
+# as uncompiled source).
 
 on:
   push:
